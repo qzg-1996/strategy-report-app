@@ -1,0 +1,863 @@
+# -*- coding: utf-8 -*-
+"""
+策略管理器 - 管理策略的增删改查和盈亏计算
+
+持仓盈亏计算规则：
+
+【期货-现货 / 期货-远期】
+- 基差 = 现货价格 - 期货价格
+- 期货方向=空: 持仓盈亏 = (期末基差 - 建仓基差) × 建仓手数 × 10
+- 期货方向=多: 持仓盈亏 = (建仓基差 - 期末基差) × 建仓手数 × 10
+
+【期货-期货】
+- 逐行计算，只有期货端
+- 期货方向=空: 持仓盈亏 = (期货建仓价 - 期货最新价) × 建仓手数 × 10
+- 期货方向=多: 持仓盈亏 = (期货最新价 - 期货建仓价) × 建仓手数 × 10
+- 全部求和
+
+【远期-现货】
+- 看品种1的方向（策略中的 spot_variety）
+- 品种1方向=卖:
+  持仓盈亏 = (品种1建仓价 - 品种1最新价) × 品种1吨 + (品种2最新价 - 品种2建仓价) × 品种2吨
+- 品种1方向=买:
+  持仓盈亏 = (品种1最新价 - 品种1建仓价) × 品种1吨 + (品种2建仓价 - 品种2最新价) × 品种2吨
+
+【投机】
+- 期货方向=空: 持仓盈亏 = (期货建仓价 - 期货最新价) × 建仓手数 × 10
+- 期货方向=多: 持仓盈亏 = (期货最新价 - 期货建仓价) × 建仓手数 × 10
+
+主力合约处理：
+- 当具体合约（如RB2605）在期货价格表中不存在时
+- 如果该合约是当前主力合约，则使用对应的主链价格（螺纹主链/热卷主链）
+"""
+import sqlite3
+import os
+import openpyxl
+from datetime import datetime
+
+class StrategyManager:
+    def __init__(self):
+        self.db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'strategy.db')
+    
+    def _get_main_contract_mapping(self):
+        """获取主力合约映射关系
+        
+        返回: {'RB2605': '螺纹主链', 'HC2605': '热卷主链', ...}
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 从主力合约配置表读取
+            cursor.execute('''
+                SELECT variety, contract_code, effective_date, expiry_date 
+                FROM main_contracts 
+                ORDER BY effective_date DESC
+            ''')
+            rows = cursor.fetchall()
+            conn.close()
+            
+            mapping = {}
+            today = datetime.now().date()
+            
+            for variety, contract_code, effective_date, expiry_date in rows:
+                # 检查是否在有效期内
+                try:
+                    if effective_date and expiry_date:
+                        eff_date = datetime.strptime(effective_date, '%Y-%m-%d').date()
+                        exp_date = datetime.strptime(expiry_date, '%Y-%m-%d').date()
+                        if eff_date <= today <= exp_date:
+                            # 根据品种确定主链名称
+                            if '螺纹' in variety or 'RB' in variety:
+                                mapping[contract_code] = '螺纹主链'
+                            elif '热卷' in variety or 'HC' in variety:
+                                mapping[contract_code] = '热卷主链'
+                except:
+                    continue
+            
+            return mapping
+        except:
+            # 如果表不存在或出错，返回空字典
+            return {}
+    
+    def _get_main_chain_for_contract(self, contract):
+        """根据合约代码获取对应的主链名称"""
+        if not contract:
+            return None
+        
+        # 先检查是否有配置的主力合约映射
+        main_contracts = self._get_main_contract_mapping()
+        if contract in main_contracts:
+            return main_contracts[contract]
+        
+        # 根据合约代码前缀判断
+        contract_upper = contract.upper()
+        if contract_upper.startswith('RB'):
+            return '螺纹主链'
+        elif contract_upper.startswith('HC'):
+            return '热卷主链'
+        
+        return None
+    
+    def get_summary_data(self):
+        """获取策略汇总数据 - 优化版：只读取一次Excel"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT * FROM strategies ORDER BY sort_order, id')
+        columns = [description[0] for description in cursor.description]
+        strategies = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        
+        # 一次性读取所有交易记录
+        cursor.execute("SELECT file_path FROM data_files WHERE file_type = 'trade_record' ORDER BY upload_date DESC LIMIT 1")
+        result = cursor.fetchone()
+        conn.close()
+        
+        # 缓存交易记录数据
+        all_trade_records = []
+        if result and os.path.exists(result[0]):
+            try:
+                wb = openpyxl.load_workbook(result[0], data_only=True)
+                ws = wb.active
+                all_trade_records = list(ws.iter_rows(min_row=3, values_only=True))
+            except Exception as e:
+                print(f"读取交易记录失败: {e}")
+        
+        result = []
+        total_position = 0
+        total_position_profit = 0
+        total_close = 0
+        total_close_profit = 0
+        
+        for strategy in strategies:
+            summary = self.calculate_strategy_summary_optimized(strategy, all_trade_records)
+            result.append({
+                'id': strategy['id'],
+                'strategy_code': strategy['strategy_code'],
+                'strategy_name': strategy['strategy_name'],
+                'strategy_type': strategy['strategy_type'],
+                'business_type': strategy['business_type'],
+                'plan_quantity': strategy['plan_quantity'] or 0,
+                'position_quantity': summary['position_quantity'],
+                'position_profit': summary['position_profit'],
+                'close_quantity': summary['close_quantity'],
+                'close_profit': summary['close_profit']
+            })
+            total_position += summary['position_quantity']
+            total_position_profit += summary['position_profit']
+            total_close += summary['close_quantity']
+            total_close_profit += summary['close_profit']
+        
+        return {
+            'strategies': result,
+            'total_position': total_position,
+            'total_position_profit': total_position_profit,
+            'total_close': total_close,
+            'total_close_profit': total_close_profit
+        }
+    
+    def calculate_strategy_summary_optimized(self, strategy, all_trade_records):
+        """计算单个策略的汇总数据 - 优化版：使用缓存的交易记录"""
+        total_futures_lots = 0
+        total_close_lots = 0
+        total_close_profit = 0
+        position_records = []
+        
+        strategy_type = strategy.get('strategy_type', '')
+        business_type = strategy.get('business_type', '')
+        futures_direction = strategy.get('futures_direction', '')
+        direction_factor = -1 if futures_direction == '空' else 1
+        
+        for row in all_trade_records:
+            if not row[1] or str(row[1]) != strategy_type:
+                continue
+            
+            # 匹配交易记录
+            if not self._match_trade_record(row, strategy, business_type):
+                continue
+            
+            futures_lots = float(row[7]) if row[7] else 0
+            close_lots = float(row[14]) if row[14] else 0
+            futures_open_price = float(row[8]) if row[8] else 0
+            futures_close_price = float(row[15]) if row[15] else 0
+            spot_lots = float(row[23]) if row[23] else 0
+            spot_open_price = float(row[24]) if row[24] else 0
+            
+            total_futures_lots += futures_lots
+            total_close_lots += close_lots
+            
+            # 计算平仓盈亏（期货端）
+            if close_lots > 0 and futures_close_price > 0:
+                close_pnl = (futures_close_price - futures_open_price) * close_lots * 10 * direction_factor
+                total_close_profit += close_pnl
+            
+            # 记录持仓明细
+            remaining = futures_lots - close_lots
+            if remaining > 0:
+                record = {
+                    'lots': remaining,
+                    'futures_open_price': futures_open_price,
+                    'spot_open_price': spot_open_price,
+                    'direction_factor': direction_factor,
+                    'futures_direction': futures_direction
+                }
+                
+                # 远期-现货需要额外的信息
+                if business_type == '远期-现货':
+                    record['spot_lots'] = spot_lots
+                    record['spot_variety'] = row[22] if row[22] else strategy.get('spot_variety', '')
+                
+                position_records.append(record)
+        
+        # 手数转吨位
+        position_lots = total_futures_lots - total_close_lots
+        position_tons = position_lots * 10
+        close_tons = total_close_lots * 10
+        
+        # 计算持仓盈亏
+        position_profit = self._calculate_position_profit(strategy, position_records)
+        
+        return {
+            'position_quantity': round(position_tons, 2),
+            'position_profit': round(position_profit, 2),
+            'close_quantity': round(close_tons, 2),
+            'close_profit': round(total_close_profit, 2)
+        }
+    
+    def calculate_strategy_summary(self, strategy):
+        """计算单个策略的汇总数据"""
+        # 获取交易记录文件
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT file_path FROM data_files WHERE file_type = 'trade_record' ORDER BY upload_date DESC LIMIT 1")
+        result = cursor.fetchone()
+        conn.close()
+        
+        total_futures_lots = 0
+        total_close_lots = 0
+        total_close_profit = 0
+        position_records = []
+        
+        if result and os.path.exists(result[0]):
+            try:
+                wb = openpyxl.load_workbook(result[0], data_only=True)
+                ws = wb.active
+                
+                strategy_type = strategy.get('strategy_type', '')
+                business_type = strategy.get('business_type', '')
+                futures_direction = strategy.get('futures_direction', '')
+                direction_factor = -1 if futures_direction == '空' else 1
+                
+                for row in ws.iter_rows(min_row=3, values_only=True):
+                    if not row[1] or str(row[1]) != strategy_type:
+                        continue
+                    
+                    # 匹配交易记录
+                    if not self._match_trade_record(row, strategy, business_type):
+                        continue
+                    
+                    futures_lots = float(row[7]) if row[7] else 0
+                    close_lots = float(row[14]) if row[14] else 0
+                    futures_open_price = float(row[8]) if row[8] else 0
+                    futures_close_price = float(row[15]) if row[15] else 0
+                    spot_lots = float(row[23]) if row[23] else 0  # 现货手数（吨数/10）
+                    spot_open_price = float(row[24]) if row[24] else 0
+                    
+                    total_futures_lots += futures_lots
+                    total_close_lots += close_lots
+                    
+                    # 计算平仓盈亏（期货端）
+                    if close_lots > 0 and futures_close_price > 0:
+                        close_pnl = (futures_close_price - futures_open_price) * close_lots * 10 * direction_factor
+                        total_close_profit += close_pnl
+                    
+                    # 记录持仓明细
+                    remaining = futures_lots - close_lots
+                    if remaining > 0:
+                        record = {
+                            'lots': remaining,
+                            'futures_open_price': futures_open_price,
+                            'spot_open_price': spot_open_price,
+                            'direction_factor': direction_factor,
+                            'futures_direction': futures_direction
+                        }
+                        
+                        # 远期-现货需要额外的信息
+                        if business_type == '远期-现货':
+                            record['spot_lots'] = spot_lots  # 现货吨数/10
+                            record['spot_variety'] = row[22] if row[22] else strategy.get('spot_variety', '')
+                        
+                        position_records.append(record)
+                        
+            except Exception as e:
+                print(f"读取交易记录失败: {e}")
+        
+        # 手数转吨位
+        position_lots = total_futures_lots - total_close_lots
+        position_tons = position_lots * 10
+        close_tons = total_close_lots * 10
+        
+        # 计算持仓盈亏
+        position_profit = self._calculate_position_profit(strategy, position_records)
+        
+        return {
+            'position_quantity': round(position_tons, 2),
+            'position_profit': round(position_profit, 2),
+            'close_quantity': round(close_tons, 2),
+            'close_profit': round(total_close_profit, 2)
+        }
+    
+    def _calculate_position_profit(self, strategy, position_records):
+        """计算持仓盈亏"""
+        if not position_records:
+            return 0
+        
+        strategy_type = strategy.get('strategy_type', '')
+        business_type = strategy.get('business_type', '')
+        futures_direction = strategy.get('futures_direction', '')
+        
+        # 获取最新价格（以期货最新日期为准，取同一日期的现货价格）
+        futures_contract = strategy.get('futures_contract', '')
+        spot_variety = strategy.get('spot_variety', '')
+        
+        total_pnl = 0
+        
+        if business_type in ['期货-现货', '期货-远期']:
+            # 【期货-现货 / 期货-远期】
+            # 基差 = 现货价格 - 期货价格
+            # 期货方向=空: 持仓盈亏 = (期末基差 - 建仓基差) × 建仓手数 × 10
+            # 期货方向=多: 持仓盈亏 = (建仓基差 - 期末基差) × 建仓手数 × 10
+            
+            # 获取期货最新价格和日期
+            futures_info = self._get_latest_futures_price_with_date(futures_contract)
+            if not futures_info:
+                return 0
+            
+            current_futures_price = futures_info['price']
+            latest_date = futures_info['date']
+            
+            # 获取现货/远期最新价格（期货-远期时spot_variety存储的是远期品种）
+            current_spot_price = self._get_spot_price_by_date(spot_variety, latest_date)
+            if current_spot_price is None:
+                return 0
+            
+            for record in position_records:
+                lots = record['lots']
+                
+                # 建仓基差 = 现货建仓价 - 期货建仓价
+                open_basis = record['spot_open_price'] - record['futures_open_price']
+                # 期末基差 = 现货最新价 - 期货最新价
+                current_basis = current_spot_price - current_futures_price
+                
+                # 根据期货方向计算盈亏
+                if futures_direction == '空':
+                    # 空: (期末基差 - 建仓基差) × 手数 × 10
+                    basis_change = current_basis - open_basis
+                else:  # 多
+                    # 多: (建仓基差 - 期末基差) × 手数 × 10
+                    basis_change = open_basis - current_basis
+                
+                pnl = lots * 10 * basis_change
+                total_pnl += pnl
+                
+        elif business_type == '期货-期货':
+            # 【期货-期货】
+            # 逐行计算，只有期货端
+            # 期货方向=空: 持仓盈亏 = (期货建仓价 - 期货最新价) × 建仓手数 × 10
+            # 期货方向=多: 持仓盈亏 = (期货最新价 - 期货建仓价) × 建仓手数 × 10
+            
+            contract2 = strategy.get('futures_contract2', '')
+            
+            # 获取两个合约的最新价格
+            futures_info1 = self._get_latest_futures_price_with_date(futures_contract)
+            futures_info2 = self._get_latest_futures_price_with_date(contract2)
+            
+            if not futures_info1 or not futures_info2:
+                return 0
+            
+            current_price1 = futures_info1['price']
+            current_price2 = futures_info2['price']
+            latest_date = futures_info1['date']
+            
+            # 注意：期货-期货的持仓记录中，需要区分是哪个合约的记录
+            # 从交易记录中已经读取了方向信息
+            for record in position_records:
+                lots = record['lots']
+                futures_direction = record.get('futures_direction', '')
+                open_price = record['futures_open_price']
+                
+                # 根据方向计算盈亏
+                if futures_direction == '空':
+                    # 空: (建仓价 - 最新价) × 手数 × 10
+                    price_change = open_price - current_price1
+                else:  # 多
+                    # 多: (最新价 - 建仓价) × 手数 × 10
+                    price_change = current_price1 - open_price
+                
+                pnl = lots * 10 * price_change
+                total_pnl += pnl
+                
+        elif business_type == '远期-现货':
+            # 【远期-现货】价差交易（两个现货品种）
+            # 品种1 = spot_variety, 品种2 = forward_variety
+            # 价差 = 品种1价格 - 品种2价格
+            # 品种1方向=卖: (品种1建仓价 - 品种1最新价) × 品种1吨 + (品种2最新价 - 品种2建仓价) × 品种2吨
+            # 品种1方向=买: (品种1最新价 - 品种1建仓价) × 品种1吨 + (品种2建仓价 - 品种2最新价) × 品种2吨
+            
+            variety2 = strategy.get('forward_variety', '')  # 品种2
+            
+            # 获取品种1最新价格
+            variety1_info = self._get_latest_spot_price_with_date(spot_variety)
+            if not variety1_info:
+                return 0
+            
+            current_price1 = variety1_info['price']
+            latest_date = variety1_info['date']
+            
+            # 获取品种2最新价格
+            current_price2 = self._get_spot_price_by_date(variety2, latest_date)
+            if current_price2 is None:
+                return 0
+            
+            for record in position_records:
+                # 品种1的建仓价和吨数
+                variety1_open_price = record['spot_open_price']
+                variety1_tons = record.get('spot_lots', 0) * 10  # 手数转吨数
+                
+                # 品种2的建仓价（这里简化处理，假设品种2建仓价与品种1相同或从其他方式获取）
+                variety2_open_price = record.get('variety2_open_price', current_price2)  # 简化处理
+                variety2_tons = variety1_tons  # 假设吨数相同
+                
+                if futures_direction == '空':  # 品种1卖，品种2买
+                    # (品种1建仓价 - 品种1最新价) × 品种1吨 + (品种2最新价 - 品种2建仓价) × 品种2吨
+                    pnl1 = (variety1_open_price - current_price1) * variety1_tons
+                    pnl2 = (current_price2 - variety2_open_price) * variety2_tons
+                else:  # 品种1买，品种2卖
+                    # (品种1最新价 - 品种1建仓价) × 品种1吨 + (品种2建仓价 - 品种2最新价) × 品种2吨
+                    pnl1 = (current_price1 - variety1_open_price) * variety1_tons
+                    pnl2 = (variety2_open_price - current_price2) * variety2_tons
+                
+                total_pnl += (pnl1 + pnl2)
+                
+        elif business_type == '投机' or strategy_type == '趋势交易':
+            # 【投机】
+            # 期货方向=空: 持仓盈亏 = (期货建仓价 - 期货最新价) × 建仓手数 × 10
+            # 期货方向=多: 持仓盈亏 = (期货最新价 - 期货建仓价) × 建仓手数 × 10
+            
+            # 获取期货最新价格
+            futures_info = self._get_latest_futures_price_with_date(futures_contract)
+            if not futures_info:
+                return 0
+            
+            current_futures_price = futures_info['price']
+            
+            for record in position_records:
+                lots = record['lots']
+                futures_direction = record.get('futures_direction', '')
+                open_price = record['futures_open_price']
+                
+                # 根据方向计算盈亏
+                if futures_direction == '空':
+                    # 空: (建仓价 - 最新价) × 手数 × 10
+                    price_change = open_price - current_futures_price
+                else:  # 多
+                    # 多: (最新价 - 建仓价) × 手数 × 10
+                    price_change = current_futures_price - open_price
+                
+                pnl = lots * 10 * price_change
+                total_pnl += pnl
+        
+        return total_pnl
+    
+    def _get_latest_futures_price_with_date(self, contract):
+        """获取期货最新价格和日期
+        
+        返回: {'price': float, 'date': datetime}
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT file_path FROM data_files WHERE file_type = 'futures_price' ORDER BY upload_date DESC LIMIT 1")
+            result = cursor.fetchone()
+            conn.close()
+            
+            if not result or not os.path.exists(result[0]):
+                return None
+            
+            wb = openpyxl.load_workbook(result[0], data_only=True)
+            ws = wb.active
+            
+            headers = list(ws.iter_rows(min_row=1, max_row=1, values_only=True))[0]
+            col_idx = None
+            actual_contract = contract
+            
+            for i, h in enumerate(headers):
+                if h == contract:
+                    col_idx = i
+                    break
+            
+            # 如果没找到，尝试使用主力合约映射
+            if col_idx is None:
+                main_chain = self._get_main_chain_for_contract(contract)
+                if main_chain:
+                    for i, h in enumerate(headers):
+                        if h == main_chain:
+                            col_idx = i
+                            actual_contract = main_chain
+                            print(f"合约{contract}未找到，使用主力合约价格({main_chain})")
+                            break
+            
+            if col_idx is None:
+                return None
+            
+            # 找最新日期的价格
+            latest_price = None
+            latest_date = None
+            
+            for row in ws.iter_rows(min_row=2, values_only=True):
+                if row[0] and row[col_idx]:
+                    date_val = row[0]
+                    if isinstance(date_val, str):
+                        try:
+                            date_val = datetime.strptime(date_val, '%Y-%m-%d')
+                        except:
+                            continue
+                    elif isinstance(date_val, datetime):
+                        pass  # 已经是datetime类型
+                    else:
+                        continue
+                    
+                    if latest_date is None or date_val > latest_date:
+                        latest_date = date_val
+                        latest_price = float(row[col_idx])
+            
+            if latest_price is None:
+                return None
+            
+            return {'price': latest_price, 'date': latest_date}
+            
+        except Exception as e:
+            print(f"获取期货最新价格失败: {e}")
+            return None
+    
+    def _get_latest_spot_price_with_date(self, variety):
+        """获取现货最新价格和日期
+        
+        返回: {'price': float, 'date': datetime}
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT file_path FROM data_files WHERE file_type = 'spot_price' ORDER BY upload_date DESC LIMIT 1")
+            result = cursor.fetchone()
+            conn.close()
+            
+            if not result or not os.path.exists(result[0]):
+                return None
+            
+            wb = openpyxl.load_workbook(result[0], data_only=True)
+            ws = wb.active
+            
+            headers = list(ws.iter_rows(min_row=1, max_row=1, values_only=True))[0]
+            col_idx = None
+            for i, h in enumerate(headers):
+                if h == variety:
+                    col_idx = i
+                    break
+            
+            if col_idx is None:
+                return None
+            
+            # 找最新日期的价格
+            latest_price = None
+            latest_date = None
+            
+            for row in ws.iter_rows(min_row=2, values_only=True):
+                if row[0] and row[col_idx]:
+                    date_val = row[0]
+                    if isinstance(date_val, str):
+                        try:
+                            date_val = datetime.strptime(date_val, '%Y-%m-%d')
+                        except:
+                            continue
+                    elif isinstance(date_val, datetime):
+                        pass
+                    else:
+                        continue
+                    
+                    if latest_date is None or date_val > latest_date:
+                        latest_date = date_val
+                        latest_price = float(row[col_idx])
+            
+            if latest_price is None:
+                return None
+            
+            return {'price': latest_price, 'date': latest_date}
+            
+        except Exception as e:
+            print(f"获取现货最新价格失败: {e}")
+            return None
+    
+    def _get_spot_price_by_date(self, spot_variety, target_date):
+        """根据日期获取现货价格"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT file_path FROM data_files WHERE file_type = 'spot_price' ORDER BY upload_date DESC LIMIT 1")
+            result = cursor.fetchone()
+            conn.close()
+            
+            if not result or not os.path.exists(result[0]):
+                return None
+            
+            wb = openpyxl.load_workbook(result[0], data_only=True)
+            ws = wb.active
+            
+            # 现货品种直接对应现货表中的列名
+            col_name = spot_variety
+            
+            headers = list(ws.iter_rows(min_row=1, max_row=1, values_only=True))[0]
+            col_idx = None
+            for i, h in enumerate(headers):
+                if h == col_name:
+                    col_idx = i
+                    break
+            
+            if col_idx is None:
+                return None
+            
+            # 找到对应日期的价格
+            target_date_only = target_date.date() if isinstance(target_date, datetime) else target_date
+            
+            for row in ws.iter_rows(min_row=2, values_only=True):
+                if row[0] and row[col_idx]:
+                    date_val = row[0]
+                    if isinstance(date_val, str):
+                        try:
+                            date_val = datetime.strptime(date_val, '%Y-%m-%d').date()
+                        except:
+                            continue
+                    elif isinstance(date_val, datetime):
+                        date_val = date_val.date()
+                    
+                    if date_val == target_date_only:
+                        return float(row[col_idx])
+            
+            return None
+            
+        except Exception as e:
+            print(f"获取现货价格失败: {e}")
+            return None
+    
+    def _get_futures_price_by_date(self, contract, target_date):
+        """根据日期获取期货价格"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT file_path FROM data_files WHERE file_type = 'futures_price' ORDER BY upload_date DESC LIMIT 1")
+            result = cursor.fetchone()
+            conn.close()
+            
+            if not result or not os.path.exists(result[0]):
+                return None
+            
+            wb = openpyxl.load_workbook(result[0], data_only=True)
+            ws = wb.active
+            
+            headers = list(ws.iter_rows(min_row=1, max_row=1, values_only=True))[0]
+            col_idx = None
+            actual_contract = contract
+            
+            for i, h in enumerate(headers):
+                if h == contract:
+                    col_idx = i
+                    break
+            
+            # 如果没找到，尝试使用主力合约映射
+            if col_idx is None:
+                main_chain = self._get_main_chain_for_contract(contract)
+                if main_chain:
+                    for i, h in enumerate(headers):
+                        if h == main_chain:
+                            col_idx = i
+                            actual_contract = main_chain
+                            print(f"合约{contract}未找到，使用主力合约价格({main_chain})")
+                            break
+            
+            if col_idx is None:
+                return None
+            
+            target_date_only = target_date.date() if isinstance(target_date, datetime) else target_date
+            
+            for row in ws.iter_rows(min_row=2, values_only=True):
+                if row[0] and row[col_idx]:
+                    date_val = row[0]
+                    if isinstance(date_val, str):
+                        try:
+                            date_val = datetime.strptime(date_val, '%Y-%m-%d').date()
+                        except:
+                            continue
+                    elif isinstance(date_val, datetime):
+                        date_val = date_val.date()
+                    
+                    if date_val == target_date_only:
+                        return float(row[col_idx])
+            
+            return None
+            
+        except Exception as e:
+            print(f"获取期货价格失败: {e}")
+            return None
+    
+    def _match_trade_record(self, row, strategy, business_type):
+        """匹配交易记录
+        
+        交易记录Excel列说明：
+        - row[5]: 期货合约
+        - row[6]: 期货方向
+        - row[22]: 现货品种
+        """
+        futures_contract = strategy.get('futures_contract', '')
+        spot_variety = strategy.get('spot_variety', '')
+        futures_direction = strategy.get('futures_direction', '')
+        
+        if business_type in ['期货-现货', '期货-远期']:
+            # 期货-现货/期货-远期：匹配期货合约、现货/远期品种、期货方向
+            return (
+                str(row[5]).upper() == str(futures_contract).upper() and
+                str(row[22]) == str(spot_variety) and
+                str(row[6]) == str(futures_direction)
+            )
+        elif business_type == '期货-期货':
+            # 期货-期货：匹配期货合约1或期货合约2，同时匹配方向
+            contract2 = strategy.get('futures_contract2', '')
+            return (
+                (str(row[5]).upper() == str(futures_contract).upper() or
+                 str(row[5]).upper() == str(contract2).upper()) and
+                str(row[6]) == str(futures_direction)
+            )
+        elif business_type == '远期-现货':
+            # 远期-现货（两个现货品种价差）：匹配现货品种1或品种2，同时匹配方向
+            variety2 = strategy.get('forward_variety', '')
+            return (
+                (str(row[22]) == str(spot_variety) or
+                 str(row[22]) == str(variety2)) and
+                str(row[6]) == str(futures_direction)
+            )
+        elif business_type == '投机':
+            # 投机：只匹配期货合约
+            return str(row[5]).upper() == str(futures_contract).upper()
+        
+        return False
+    
+    def get_strategy_weekly_data(self, strategy, all_trade_records=None):
+        """获取策略按周复盘数据 - 优化版：支持缓存交易记录"""
+        weekly_data = []
+        
+        # 如果没有提供缓存的交易记录，则自己读取
+        if all_trade_records is None:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT file_path FROM data_files WHERE file_type = 'trade_record' ORDER BY upload_date DESC LIMIT 1")
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result and os.path.exists(result[0]):
+                try:
+                    wb = openpyxl.load_workbook(result[0], data_only=True)
+                    ws = wb.active
+                    all_trade_records = list(ws.iter_rows(min_row=3, values_only=True))
+                except Exception as e:
+                    print(f"读取交易记录失败: {e}")
+                    return weekly_data
+            else:
+                return weekly_data
+        
+        try:
+            strategy_type = strategy.get('strategy_type', '')
+            business_type = strategy.get('business_type', '')
+            futures_direction = strategy.get('futures_direction', '')
+            direction_factor = -1 if futures_direction == '空' else 1
+            
+            weeks = {}
+            
+            for row in all_trade_records:
+                if not row[1]:
+                    continue
+                
+                if str(row[1]) != strategy_type:
+                    continue
+                
+                match = self._match_trade_record(row, strategy, business_type)
+                
+                if match and row[4]:
+                    if isinstance(row[4], datetime):
+                        week_num = row[4].isocalendar()[1]
+                        week_key = f"{row[4].year}年第{week_num}周"
+                    else:
+                        week_key = "未知周次"
+                    
+                    if week_key not in weeks:
+                        weeks[week_key] = {
+                            'week': week_key,
+                            'open_lots': 0,
+                            'close_lots': 0,
+                            'close_pnl': 0,
+                            'position_lots': 0,
+                        }
+                    
+                    weeks[week_key]['open_lots'] += float(row[7]) if row[7] else 0
+                    
+                    close_lots = float(row[14]) if row[14] else 0
+                    weeks[week_key]['close_lots'] += close_lots
+                    
+                    # 计算平仓盈亏
+                    if close_lots > 0:
+                        open_price = float(row[8]) if row[8] else 0
+                        close_price = float(row[15]) if row[15] else 0
+                        pnl = (close_price - open_price) * close_lots * 10 * direction_factor
+                        weeks[week_key]['close_pnl'] += pnl
+            
+            cumulative_position = 0
+            for week_key in sorted(weeks.keys()):
+                weeks[week_key]['position_lots'] = weeks[week_key]['open_lots'] - weeks[week_key]['close_lots']
+                cumulative_position += weeks[week_key]['position_lots']
+                weeks[week_key]['cumulative_position'] = cumulative_position
+                
+                # 转换为吨位 (1手 = 10吨)
+                weeks[week_key]['open_tons'] = weeks[week_key]['open_lots'] * 10
+                weeks[week_key]['close_tons'] = weeks[week_key]['close_lots'] * 10
+                weeks[week_key]['cumulative_tons'] = cumulative_position * 10
+            
+            weekly_data = list(weeks.values())
+            
+        except Exception as e:
+            print(f"处理交易记录失败: {e}")
+        
+        return weekly_data
+    
+    def get_all_strategies_weekly_data(self, strategies):
+        """批量获取多个策略的按周复盘数据 - 优化版：只读取一次Excel"""
+        # 一次性读取所有交易记录
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT file_path FROM data_files WHERE file_type = 'trade_record' ORDER BY upload_date DESC LIMIT 1")
+        result = cursor.fetchone()
+        conn.close()
+        
+        all_trade_records = []
+        if result and os.path.exists(result[0]):
+            try:
+                wb = openpyxl.load_workbook(result[0], data_only=True)
+                ws = wb.active
+                all_trade_records = list(ws.iter_rows(min_row=3, values_only=True))
+            except Exception as e:
+                print(f"读取交易记录失败: {e}")
+        
+        # 为每个策略计算复盘数据
+        result = {}
+        for strategy in strategies:
+            weekly_data = self.get_strategy_weekly_data(strategy, all_trade_records)
+            result[strategy['id']] = weekly_data
+        
+        return result

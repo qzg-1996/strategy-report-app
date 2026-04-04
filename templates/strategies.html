@@ -1,0 +1,571 @@
+{% extends "base.html" %}
+
+{% block title %}策略管理 - 期现交易策略汇报软件{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2 class="mb-0">策略管理</h2>
+    <button class="btn btn-primary" onclick="openAddModal()">
+        <i class="bi bi-plus-lg me-2"></i>添加策略
+    </button>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover" id="strategyTable">
+                <thead>
+                    <tr>
+                        <th style="width: 60px;">序号</th>
+                        <th>策略编号</th>
+                        <th>策略名称</th>
+                        <th>策略类型</th>
+                        <th>业务类型</th>
+                        <th>期货合约</th>
+                        <th>现货/远期品种</th>
+                        <th>方向</th>
+                        <th style="width: 120px;">调整顺序</th>
+                        <th style="width: 100px;">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="strategyTableBody">
+                    <!-- 动态加载 -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- 添加/编辑策略模态框 -->
+<div class="modal fade" id="strategyModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="modalTitle">添加策略</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="strategyForm">
+                    <input type="hidden" id="strategy_id">
+                    
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">策略编号 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="strategy_code" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">策略名称 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="strategy_name" required>
+                        </div>
+                    </div>
+                    
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">策略类型 <span class="text-danger">*</span></label>
+                            <select class="form-select" id="strategy_type" onchange="onStrategyTypeChange()" required>
+                                <option value="">请选择</option>
+                                <option value="套期保值">套期保值</option>
+                                <option value="基差交易">基差交易</option>
+                                <option value="趋势交易">趋势交易</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">业务类型 <span class="text-danger">*</span></label>
+                            <select class="form-select" id="business_type" onchange="onBusinessTypeChange()" required>
+                                <option value="">请先选择策略类型</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <!-- 动态字段区域 -->
+                    <div id="dynamicFields"></div>
+                    
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">计划数量（吨）</label>
+                            <input type="number" class="form-control" id="plan_quantity" step="0.01">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">申请组织</label>
+                            <input type="text" class="form-control" id="apply_org">
+                        </div>
+                    </div>
+                    
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">申请人员</label>
+                            <input type="text" class="form-control" id="apply_person">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">有效期至</label>
+                            <input type="date" class="form-control" id="valid_until">
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveStrategy()">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 删除确认模态框 -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title">确认删除</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>确定要删除策略 <strong id="deleteStrategyName"></strong> 吗？</p>
+                <p class="text-danger mb-0">此操作不可恢复！</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-danger" onclick="confirmDelete()">删除</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let strategies = [];
+let deleteId = null;
+let strategyModal = null;
+let deleteModal = null;
+
+// 业务类型选项
+const businessTypeOptions = {
+    '套期保值': ['期货-现货'],
+    '基差交易': ['期货-现货', '期货-远期', '期货-期货', '远期-现货'],
+    '趋势交易': ['投机']
+};
+
+document.addEventListener('DOMContentLoaded', function() {
+    strategyModal = new bootstrap.Modal(document.getElementById('strategyModal'));
+    deleteModal = new bootstrap.Modal(document.getElementById('deleteModal'));
+    loadStrategies();
+});
+
+function loadStrategies() {
+    fetch('/api/strategies')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                strategies = data.data;
+                renderStrategies();
+            }
+        });
+}
+
+function renderStrategies() {
+    const tbody = document.getElementById('strategyTableBody');
+    tbody.innerHTML = '';
+    
+    strategies.forEach((s, index) => {
+        const tr = document.createElement('tr');
+        
+        // 根据业务类型显示不同的字段
+        let contractDisplay = '-';
+        let varietyDisplay = '-';
+        let directionDisplay = '-';
+        
+        if (s.business_type === '期货-现货' || s.business_type === '期货-远期') {
+            contractDisplay = s.futures_contract || '-';
+            varietyDisplay = s.spot_variety || s.forward_variety || '-';
+            directionDisplay = s.futures_direction || '-';
+        } else if (s.business_type === '期货-期货') {
+            contractDisplay = `${s.futures_contract || '-'} / ${s.futures_contract2 || '-'}`;
+            varietyDisplay = '期货价差';
+            directionDisplay = s.futures_direction ? `${s.futures_direction}(合约1)` : '-';
+        } else if (s.business_type === '远期-现货') {
+            contractDisplay = '-';
+            varietyDisplay = `${s.spot_variety || '-'} / ${s.forward_variety || '-'}`;
+            directionDisplay = s.futures_direction ? `${s.futures_direction}(品种1)` : '-';
+        } else if (s.business_type === '投机') {
+            contractDisplay = s.futures_contract || '-';
+            varietyDisplay = '-';
+            directionDisplay = s.futures_direction || '-';
+        }
+        
+        // 序号样式
+        const isFirst = index === 0;
+        const isLast = index === strategies.length - 1;
+        
+        tr.innerHTML = `
+            <td>
+                <span class="badge bg-secondary fs-6">${index + 1}</span>
+            </td>
+            <td>${s.strategy_code}</td>
+            <td>${s.strategy_name}</td>
+            <td><span class="badge badge-strategy badge-${getStrategyBadgeClass(s.strategy_type)}">${s.strategy_type}</span></td>
+            <td>${s.business_type}</td>
+            <td>${contractDisplay}</td>
+            <td>${varietyDisplay}</td>
+            <td>${directionDisplay}</td>
+            <td>
+                <div class="d-flex gap-1">
+                    <button class="btn btn-sm btn-outline-secondary ${isFirst ? 'disabled' : ''}" 
+                            onclick="${isFirst ? '' : `moveStrategy(${s.id}, -1)`}" 
+                            title="上移">
+                        <i class="bi bi-arrow-up"></i> 上移
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary ${isLast ? 'disabled' : ''}" 
+                            onclick="${isLast ? '' : `moveStrategy(${s.id}, 1)`}" 
+                            title="下移">
+                        <i class="bi bi-arrow-down"></i> 下移
+                    </button>
+                </div>
+            </td>
+            <td>
+                <div class="d-flex gap-1">
+                    <button class="btn btn-sm btn-outline-primary" onclick="editStrategy(${s.id})" title="编辑">
+                        <i class="bi bi-pencil"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="showDeleteModal(${s.id}, '${s.strategy_name}')" title="删除">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function getStrategyBadgeClass(type) {
+    if (type === '套期保值') return 'hedge';
+    if (type === '基差交易') return 'basis';
+    if (type === '趋势交易') return 'trend';
+    return '';
+}
+
+function onStrategyTypeChange() {
+    const strategyType = document.getElementById('strategy_type').value;
+    const businessSelect = document.getElementById('business_type');
+    
+    businessSelect.innerHTML = '<option value="">请选择</option>';
+    if (strategyType && businessTypeOptions[strategyType]) {
+        businessTypeOptions[strategyType].forEach(type => {
+            businessSelect.innerHTML += `<option value="${type}">${type}</option>`;
+        });
+    }
+    
+    // 清空动态字段
+    document.getElementById('dynamicFields').innerHTML = '';
+}
+
+function onBusinessTypeChange() {
+    const businessType = document.getElementById('business_type').value;
+    const container = document.getElementById('dynamicFields');
+    
+    let html = '';
+    
+    if (businessType === '期货-现货') {
+        html = `
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label class="form-label">期货合约</label>
+                    <input type="text" class="form-control" id="futures_contract" placeholder="如：RB2510">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">期货方向</label>
+                    <select class="form-select" id="futures_direction">
+                        <option value="">请选择</option>
+                        <option value="空">空（卖出期货，买入现货）</option>
+                        <option value="多">多（买入期货，卖出现货）</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label class="form-label">现货品种</label>
+                    <select class="form-select" id="spot_variety">
+                        <option value="">请选择</option>
+                        <option value="马钢螺纹">马钢螺纹</option>
+                        <option value="长钢螺纹">长钢螺纹</option>
+                        <option value="中天螺纹">中天螺纹</option>
+                        <option value="马钢热卷">马钢热卷</option>
+                        <option value="沙钢热卷">沙钢热卷</option>
+                        <option value="马钢冷卷">马钢冷卷</option>
+                        <option value="天铁热卷">天铁热卷</option>
+                        <option value="唐山钢坯">唐山钢坯</option>
+                    </select>
+                </div>
+            </div>
+        `;
+    } else if (businessType === '期货-远期') {
+        html = `
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label class="form-label">期货合约</label>
+                    <input type="text" class="form-control" id="futures_contract" placeholder="如：RB2510">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">期货方向</label>
+                    <select class="form-select" id="futures_direction">
+                        <option value="">请选择</option>
+                        <option value="空">空（卖出期货，买入远期）</option>
+                        <option value="多">多（买入期货，卖出远期）</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label class="form-label">远期品种</label>
+                    <select class="form-select" id="spot_variety">
+                        <option value="">请选择</option>
+                        <option value="马钢螺纹">马钢螺纹</option>
+                        <option value="长钢螺纹">长钢螺纹</option>
+                        <option value="中天螺纹">中天螺纹</option>
+                        <option value="马钢热卷">马钢热卷</option>
+                        <option value="沙钢热卷">沙钢热卷</option>
+                        <option value="马钢冷卷">马钢冷卷</option>
+                        <option value="天铁热卷">天铁热卷</option>
+                        <option value="唐山钢坯">唐山钢坯</option>
+                    </select>
+                </div>
+            </div>
+        `;
+    } else if (businessType === '期货-期货') {
+        html = `
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label class="form-label">期货合约1</label>
+                    <input type="text" class="form-control" id="futures_contract" placeholder="如：RB2510">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">期货合约2</label>
+                    <input type="text" class="form-control" id="futures_contract2" placeholder="如：HC2510">
+                </div>
+            </div>
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label class="form-label">期货合约1方向</label>
+                    <select class="form-select" id="futures_direction">
+                        <option value="">请选择</option>
+                        <option value="空">空（卖出合约1，买入合约2）</option>
+                        <option value="多">多（买入合约1，卖出合约2）</option>
+                    </select>
+                </div>
+            </div>
+            <div class="alert alert-info mt-2">
+                <i class="bi bi-info-circle me-2"></i>
+                <strong>说明：</strong>价差 = 期货合约1 - 期货合约2。期货合约1方向为"空"时，卖出合约1、买入合约2；方向为"多"时，买入合约1、卖出合约2。
+            </div>
+        `;
+    } else if (businessType === '远期-现货') {
+        html = `
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label class="form-label">现货品种1</label>
+                    <select class="form-select" id="spot_variety">
+                        <option value="">请选择</option>
+                        <option value="马钢螺纹">马钢螺纹</option>
+                        <option value="长钢螺纹">长钢螺纹</option>
+                        <option value="中天螺纹">中天螺纹</option>
+                        <option value="马钢热卷">马钢热卷</option>
+                        <option value="沙钢热卷">沙钢热卷</option>
+                        <option value="马钢冷卷">马钢冷卷</option>
+                        <option value="天铁热卷">天铁热卷</option>
+                        <option value="唐山钢坯">唐山钢坯</option>
+                    </select>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">现货品种2</label>
+                    <select class="form-select" id="forward_variety">
+                        <option value="">请选择</option>
+                        <option value="马钢螺纹">马钢螺纹</option>
+                        <option value="长钢螺纹">长钢螺纹</option>
+                        <option value="中天螺纹">中天螺纹</option>
+                        <option value="马钢热卷">马钢热卷</option>
+                        <option value="沙钢热卷">沙钢热卷</option>
+                        <option value="马钢冷卷">马钢冷卷</option>
+                        <option value="天铁热卷">天铁热卷</option>
+                        <option value="唐山钢坯">唐山钢坯</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label class="form-label">现货品种1方向</label>
+                    <select class="form-select" id="futures_direction">
+                        <option value="">请选择</option>
+                        <option value="空">空（卖出品种1，买入品种2）</option>
+                        <option value="多">多（买入品种1，卖出品种2）</option>
+                    </select>
+                </div>
+            </div>
+            <div class="alert alert-info mt-2">
+                <i class="bi bi-info-circle me-2"></i>
+                <strong>说明：</strong>价差 = 现货品种1 - 现货品种2。品种1方向为"空"时，卖出品种1、买入品种2；方向为"多"时，买入品种1、卖出品种2。
+            </div>
+        `;
+    } else if (businessType === '投机') {
+        html = `
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle me-2"></i>趋势交易-投机类型只需填写基本信息，系统将自动汇总所有期货交易记录。
+            </div>
+        `;
+    }
+    
+    container.innerHTML = html;
+}
+
+function openAddModal() {
+    document.getElementById('strategyForm').reset();
+    document.getElementById('strategy_id').value = '';
+    document.getElementById('modalTitle').textContent = '添加策略';
+    document.getElementById('dynamicFields').innerHTML = '';
+    document.getElementById('business_type').innerHTML = '<option value="">请先选择策略类型</option>';
+    strategyModal.show();
+}
+
+function editStrategy(id) {
+    const s = strategies.find(x => x.id === id);
+    if (!s) return;
+    
+    document.getElementById('strategy_id').value = s.id;
+    document.getElementById('strategy_code').value = s.strategy_code;
+    document.getElementById('strategy_name').value = s.strategy_name;
+    document.getElementById('strategy_type').value = s.strategy_type;
+    document.getElementById('plan_quantity').value = s.plan_quantity || '';
+    document.getElementById('apply_org').value = s.apply_org || '';
+    document.getElementById('apply_person').value = s.apply_person || '';
+    document.getElementById('valid_until').value = s.valid_until || '';
+    
+    onStrategyTypeChange();
+    document.getElementById('business_type').value = s.business_type;
+    onBusinessTypeChange();
+    
+    // 填充动态字段
+    setTimeout(() => {
+        if (document.getElementById('futures_contract')) {
+            document.getElementById('futures_contract').value = s.futures_contract || '';
+        }
+        if (document.getElementById('futures_contract2')) {
+            document.getElementById('futures_contract2').value = s.futures_contract2 || '';
+        }
+        if (document.getElementById('futures_direction')) {
+            document.getElementById('futures_direction').value = s.futures_direction || '';
+        }
+        if (document.getElementById('spot_variety')) {
+            document.getElementById('spot_variety').value = s.spot_variety || '';
+        }
+        if (document.getElementById('forward_variety')) {
+            document.getElementById('forward_variety').value = s.forward_variety || '';
+        }
+    }, 100);
+    
+    document.getElementById('modalTitle').textContent = '编辑策略';
+    strategyModal.show();
+}
+
+function saveStrategy() {
+    const saveBtn = document.querySelector('#strategyModal .btn-primary');
+    const data = {
+        id: document.getElementById('strategy_id').value,
+        strategy_code: document.getElementById('strategy_code').value,
+        strategy_name: document.getElementById('strategy_name').value,
+        strategy_type: document.getElementById('strategy_type').value,
+        business_type: document.getElementById('business_type').value,
+        futures_contract: document.getElementById('futures_contract')?.value || null,
+        futures_contract2: document.getElementById('futures_contract2')?.value || null,
+        futures_direction: document.getElementById('futures_direction')?.value || null,
+        spot_variety: document.getElementById('spot_variety')?.value || null,
+        forward_variety: document.getElementById('forward_variety')?.value || null,
+        plan_quantity: document.getElementById('plan_quantity').value || null,
+        apply_org: document.getElementById('apply_org').value || null,
+        apply_person: document.getElementById('apply_person').value || null,
+        valid_until: document.getElementById('valid_until').value || null,
+    };
+    
+    if (!data.strategy_code || !data.strategy_name || !data.strategy_type || !data.business_type) {
+        showToast('请填写所有必填项！', 'warning');
+        return;
+    }
+    
+    showLoading(saveBtn, '保存中...');
+    
+    fetch('/api/strategies', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(result => {
+        hideLoading(saveBtn);
+        if (result.success) {
+            strategyModal.hide();
+            loadStrategies();
+            showToast(data.id ? '策略更新成功！' : '策略添加成功！', 'success');
+        } else {
+            showToast('保存失败：' + result.error, 'error');
+        }
+    })
+    .catch(error => {
+        hideLoading(saveBtn);
+        showToast('保存出错：' + error, 'error');
+    });
+}
+
+function showDeleteModal(id, name) {
+    deleteId = id;
+    document.getElementById('deleteStrategyName').textContent = name;
+    deleteModal.show();
+}
+
+function confirmDelete() {
+    if (!deleteId) return;
+    
+    fetch('/api/strategies/' + deleteId, {
+        method: 'DELETE'
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            deleteModal.hide();
+            loadStrategies();
+            showToast('策略删除成功！', 'success', '删除成功');
+        } else {
+            showToast('删除失败：' + result.error, 'error', '删除失败');
+        }
+    })
+    .catch(error => {
+        showToast('删除出错：' + error, 'error', '系统错误');
+    });
+}
+
+function moveStrategy(id, direction) {
+    const index = strategies.findIndex(s => s.id === id);
+    if (index < 0) return;
+    
+    const newIndex = index + direction;
+    if (newIndex < 0 || newIndex >= strategies.length) return;
+    
+    // 交换位置
+    const temp = strategies[index];
+    strategies[index] = strategies[newIndex];
+    strategies[newIndex] = temp;
+    
+    // 更新排序值
+    const orders = strategies.map((s, i) => ({id: s.id, sort_order: i}));
+    
+    fetch('/api/strategies/reorder', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({orders: orders})
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            renderStrategies();
+        }
+    });
+}
+</script>
+{% endblock %}

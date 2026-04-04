@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+
+{% block title %}策略执行汇总 - 期现交易策略汇报软件{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2 class="mb-0">策略执行情况汇总</h2>
+    <button class="btn btn-accent" onclick="refreshData()">
+        <i class="bi bi-arrow-clockwise me-2"></i>刷新数据
+    </button>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-value text-primary" id="totalPositionQty">-</div>
+            <div class="stat-label">总持仓数量(吨)</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card" id="positionProfitCard">
+            <div class="stat-value" id="totalPositionProfit">-</div>
+            <div class="stat-label">总持仓盈亏(元)</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-value text-info" id="totalCloseQty">-</div>
+            <div class="stat-label">总平仓数量(吨)</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card" id="closeProfitCard">
+            <div class="stat-value" id="totalCloseProfit">-</div>
+            <div class="stat-label">总平仓盈亏(元)</div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <i class="bi bi-table me-2"></i>策略执行明细
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover" id="summaryTable">
+                <thead>
+                    <tr>
+                        <th>策略编号</th>
+                        <th>策略名称</th>
+                        <th>策略类型</th>
+                        <th>计划数量(吨)</th>
+                        <th>持仓数量(吨)</th>
+                        <th>持仓盈亏(元)</th>
+                        <th>平仓数量(吨)</th>
+                        <th>平仓盈亏(元)</th>
+                    </tr>
+                </thead>
+                <tbody id="summaryTableBody">
+                    <tr>
+                        <td colspan="8" class="text-center text-muted py-4">
+                            <i class="bi bi-hourglass-split me-2"></i>加载中...
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    loadSummaryData();
+});
+
+function loadSummaryData() {
+    fetch('/api/summary')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                renderSummary(data.data);
+                updateTotals(data.data);
+            } else {
+                document.getElementById('summaryTableBody').innerHTML = `
+                    <tr><td colspan="8" class="text-center text-danger">加载失败：${data.error}</td></tr>
+                `;
+            }
+        })
+        .catch(error => {
+            document.getElementById('summaryTableBody').innerHTML = `
+                <tr><td colspan="8" class="text-center text-danger">加载出错：${error}</td></tr>
+            `;
+        });
+}
+
+function renderSummary(data) {
+    const tbody = document.getElementById('summaryTableBody');
+    tbody.innerHTML = '';
+    
+    if (!data || data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">暂无数据</td></tr>';
+        return;
+    }
+    
+    data.forEach(item => {
+        const tr = document.createElement('tr');
+        
+        // 根据盈亏设置颜色
+        const positionProfitClass = item.position_profit > 0 ? 'text-danger' : (item.position_profit < 0 ? 'text-success' : '');
+        const closeProfitClass = item.close_profit > 0 ? 'text-danger' : (item.close_profit < 0 ? 'text-success' : '');
+        
+        tr.innerHTML = `
+            <td>${item.strategy_code}</td>
+            <td>${item.strategy_name}</td>
+            <td><span class="badge badge-strategy badge-${getStrategyBadgeClass(item.strategy_type)}">${item.strategy_type}</span></td>
+            <td class="text-end">${formatNumber(item.plan_quantity)}</td>
+            <td class="text-end">${formatNumber(item.position_quantity)}</td>
+            <td class="text-end ${positionProfitClass}">${formatMoney(item.position_profit)}</td>
+            <td class="text-end">${formatNumber(item.close_quantity)}</td>
+            <td class="text-end ${closeProfitClass}">${formatMoney(item.close_profit)}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function updateTotals(data) {
+    let totalPositionQty = 0;
+    let totalPositionProfit = 0;
+    let totalCloseQty = 0;
+    let totalCloseProfit = 0;
+    
+    data.forEach(item => {
+        totalPositionQty += parseFloat(item.position_quantity) || 0;
+        totalPositionProfit += parseFloat(item.position_profit) || 0;
+        totalCloseQty += parseFloat(item.close_quantity) || 0;
+        totalCloseProfit += parseFloat(item.close_profit) || 0;
+    });
+    
+    document.getElementById('totalPositionQty').textContent = formatNumber(totalPositionQty);
+    document.getElementById('totalPositionProfit').textContent = formatMoney(totalPositionProfit);
+    document.getElementById('totalCloseQty').textContent = formatNumber(totalCloseQty);
+    document.getElementById('totalCloseProfit').textContent = formatMoney(totalCloseProfit);
+    
+    // 根据盈亏设置卡片颜色
+    const positionCard = document.getElementById('positionProfitCard');
+    if (totalPositionProfit > 0) {
+        positionCard.className = 'stat-card danger';
+    } else if (totalPositionProfit < 0) {
+        positionCard.className = 'stat-card success';
+    } else {
+        positionCard.className = 'stat-card';
+    }
+    
+    const closeCard = document.getElementById('closeProfitCard');
+    if (totalCloseProfit > 0) {
+        closeCard.className = 'stat-card danger';
+    } else if (totalCloseProfit < 0) {
+        closeCard.className = 'stat-card success';
+    } else {
+        closeCard.className = 'stat-card';
+    }
+}
+
+function getStrategyBadgeClass(type) {
+    if (type === '套期保值') return 'hedge';
+    if (type === '基差交易') return 'basis';
+    if (type === '趋势交易') return 'trend';
+    return '';
+}
+
+function formatNumber(num) {
+    if (num === null || num === undefined || isNaN(num)) return '-';
+    return num.toLocaleString('zh-CN', {maximumFractionDigits: 2});
+}
+
+function formatMoney(num) {
+    if (num === null || num === undefined || isNaN(num)) return '-';
+    const sign = num > 0 ? '+' : '';
+    return sign + num.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+
+function refreshData() {
+    document.getElementById('summaryTableBody').innerHTML = `
+        <tr><td colspan="8" class="text-center text-muted py-4">
+            <i class="bi bi-hourglass-split me-2"></i>加载中...
+        </td></tr>
+    `;
+    loadSummaryData();
+}
+</script>
+{% endblock %}

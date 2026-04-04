@@ -1,0 +1,24 @@
+# Render 平台部署配置
+# 访问 https://render.com/ 创建免费账户
+
+services:
+  - type: web
+    name: strategy-report-app
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: strategy-db
+          property: connectionString
+
+databases:
+  - name: strategy-db
+    databaseName: strategy_db
+    user: strategy_user
+    plan: free  # 免费计划

@@ -1,0 +1,326 @@
+{% extends "base.html" %}
+
+{% block title %}策略汇报 - 期现交易策略汇报软件{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2 class="mb-0">策略汇报生成</h2>
+    <button class="btn btn-accent btn-lg" onclick="generateReport()">
+        <i class="bi bi-file-earmark-pdf me-2"></i>生成PDF汇报
+    </button>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <!-- 基本信息 -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <i class="bi bi-info-circle me-2"></i>基本信息
+            </div>
+            <div class="card-body">
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label">报告周期</label>
+                        <input type="week" class="form-control" id="reportWeek" value="">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">编制部门</label>
+                        <input type="text" class="form-control" id="department" value="经营管理部">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 行情回顾 -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <i class="bi bi-graph-up me-2"></i>行情回顾
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label class="form-label">价格走势</label>
+                    <textarea class="form-control" id="priceTrend" rows="3" placeholder="描述本周价格走势..."></textarea>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">产量情况</label>
+                    <textarea class="form-control" id="productionStatus" rows="2" placeholder="描述产量情况..."></textarea>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">需求情况</label>
+                    <textarea class="form-control" id="demandStatus" rows="2" placeholder="描述需求情况..."></textarea>
+                </div>
+                <div class="mb-0">
+                    <label class="form-label">库存情况</label>
+                    <textarea class="form-control" id="inventoryStatus" rows="2" placeholder="描述库存情况..."></textarea>
+                </div>
+            </div>
+        </div>
+
+        <!-- 行情展望 -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <i class="bi bi-telescope me-2"></i>行情展望
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label class="form-label">宏观方面</label>
+                    <textarea class="form-control" id="macroOutlook" rows="2" placeholder="宏观政策分析..."></textarea>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">成本方面</label>
+                    <textarea class="form-control" id="costOutlook" rows="2" placeholder="成本分析..."></textarea>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">技术方面</label>
+                    <textarea class="form-control" id="technicalOutlook" rows="2" placeholder="技术面分析..."></textarea>
+                </div>
+                <div class="mb-0">
+                    <label class="form-label">行情观点</label>
+                    <textarea class="form-control" id="marketView" rows="2" placeholder="综合行情观点..."></textarea>
+                </div>
+            </div>
+        </div>
+
+        <!-- 关键点位 -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <i class="bi bi-bullseye me-2"></i>关键点位
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label class="form-label">螺纹期货（RB）关键点位</label>
+                    <textarea class="form-control" id="rbLevels" rows="3" placeholder="支撑位：3100、3050&#10;压力位：3200、3250"></textarea>
+                </div>
+                <div class="mb-0">
+                    <label class="form-label">热卷期货（HC）关键点位</label>
+                    <textarea class="form-control" id="hcLevels" rows="3" placeholder="支撑位：3200、3150&#10;压力位：3300、3350"></textarea>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <!-- 策略选择 -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-check-square me-2"></i>选择策略</span>
+                <div>
+                    <button class="btn btn-sm btn-outline-primary" onclick="selectAllStrategies()">全选</button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="deselectAllStrategies()">取消</button>
+                </div>
+            </div>
+            <div class="card-body" style="max-height: 400px; overflow-y: auto;">
+                <div id="strategyList">
+                    <div class="text-center text-muted py-4">
+                        <i class="bi bi-hourglass-split me-2"></i>加载中...
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 预览说明 -->
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-info-circle me-2"></i>PDF汇报结构
+            </div>
+            <div class="card-body">
+                <ol class="mb-0">
+                    <li class="mb-2">封面（标题、周期、编制信息）</li>
+                    <li class="mb-2">目录</li>
+                    <li class="mb-2">行情回顾</li>
+                    <li class="mb-2">行情展望</li>
+                    <li class="mb-2">策略执行情况汇总表</li>
+                    <li class="mb-2">策略执行详情（每页一个策略）</li>
+                    <li class="mb-2">关键点位</li>
+                    <li>结尾页</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 生成进度模态框 -->
+<div class="modal fade" id="generateModal" tabindex="-1" data-bs-backdrop="static">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">生成PDF汇报</h5>
+            </div>
+            <div class="modal-body text-center py-4">
+                <div class="spinner-border text-primary mb-3" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="mb-0">正在生成PDF文件，请稍候...</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 下载模态框 -->
+<div class="modal fade" id="downloadModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title"><i class="bi bi-check-circle me-2"></i>生成成功</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body text-center py-4">
+                <i class="bi bi-file-earmark-pdf text-danger" style="font-size: 4rem;"></i>
+                <h5 class="mt-3">PDF汇报已生成</h5>
+                <p class="text-muted mb-0">点击下方按钮下载文件</p>
+            </div>
+            <div class="modal-footer justify-content-center">
+                <a id="previewLink" href="#" target="_blank" class="btn btn-outline-primary btn-lg me-2">
+                    <i class="bi bi-eye me-2"></i>预览PDF
+                </a>
+                <a id="downloadLink" href="#" class="btn btn-primary btn-lg">
+                    <i class="bi bi-download me-2"></i>下载PDF
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let strategies = [];
+let generateModal = null;
+let downloadModal = null;
+
+document.addEventListener('DOMContentLoaded', function() {
+    generateModal = new bootstrap.Modal(document.getElementById('generateModal'));
+    downloadModal = new bootstrap.Modal(document.getElementById('downloadModal'));
+    
+    // 设置默认报告周期为本周
+    const now = new Date();
+    const year = now.getFullYear();
+    const week = String(getWeekNumber(now)).padStart(2, '0');
+    document.getElementById('reportWeek').value = `${year}-W${week}`;
+    
+    loadStrategies();
+});
+
+function getWeekNumber(date) {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+}
+
+function loadStrategies() {
+    fetch('/api/strategies')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                strategies = data.data;
+                renderStrategyList();
+            }
+        })
+        .catch(error => {
+            console.error('加载策略失败:', error);
+            document.getElementById('strategyList').innerHTML = 
+                '<div class="text-center text-danger">加载失败</div>';
+        });
+}
+
+function renderStrategyList() {
+    const container = document.getElementById('strategyList');
+    container.innerHTML = '';
+    
+    if (strategies.length === 0) {
+        container.innerHTML = '<div class="text-center text-muted">暂无策略</div>';
+        return;
+    }
+    
+    strategies.forEach(s => {
+        const div = document.createElement('div');
+        div.className = 'form-check mb-2';
+        div.innerHTML = `
+            <input class="form-check-input strategy-checkbox" type="checkbox" value="${s.id}" id="strategy_${s.id}" checked>
+            <label class="form-check-label" for="strategy_${s.id}">
+                <span class="badge badge-strategy badge-${getStrategyBadgeClass(s.strategy_type)} me-1">${s.strategy_type.substr(0,2)}</span>
+                ${s.strategy_code} ${s.strategy_name}
+            </label>
+        `;
+        container.appendChild(div);
+    });
+}
+
+function getStrategyBadgeClass(type) {
+    if (type === '套期保值') return 'hedge';
+    if (type === '基差交易') return 'basis';
+    if (type === '趋势交易') return 'trend';
+    return '';
+}
+
+function selectAllStrategies() {
+    document.querySelectorAll('.strategy-checkbox').forEach(cb => cb.checked = true);
+}
+
+function deselectAllStrategies() {
+    document.querySelectorAll('.strategy-checkbox').forEach(cb => cb.checked = false);
+}
+
+function generateReport() {
+    // 获取选中的策略
+    const selectedIds = Array.from(document.querySelectorAll('.strategy-checkbox:checked'))
+        .map(cb => parseInt(cb.value));
+    
+    if (selectedIds.length === 0) {
+        showToast('请至少选择一个策略！', 'warning');
+        return;
+    }
+    
+    // 获取选中的策略详情
+    const selectedStrategies = strategies.filter(s => selectedIds.includes(s.id));
+    
+    // 准备数据
+    const data = {
+        report_week: document.getElementById('reportWeek').value,
+        department: document.getElementById('department').value,
+        price_trend: document.getElementById('priceTrend').value,
+        production_status: document.getElementById('productionStatus').value,
+        demand_status: document.getElementById('demandStatus').value,
+        inventory_status: document.getElementById('inventoryStatus').value,
+        macro_outlook: document.getElementById('macroOutlook').value,
+        cost_outlook: document.getElementById('costOutlook').value,
+        technical_outlook: document.getElementById('technicalOutlook').value,
+        market_view: document.getElementById('marketView').value,
+        rb_key_levels: document.getElementById('rbLevels').value,
+        hc_key_levels: document.getElementById('hcLevels').value,
+        strategies: selectedStrategies
+    };
+    
+    // 显示生成中
+    generateModal.show();
+    
+    // 发送请求
+    fetch('/api/generate-report', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(result => {
+        generateModal.hide();
+        
+        if (result.success) {
+            document.getElementById('downloadLink').href = result.download_url;
+            // 设置预览链接
+            const previewUrl = result.download_url.replace('/download/', '/preview/');
+            document.getElementById('previewLink').href = previewUrl;
+            downloadModal.show();
+            showToast('PDF汇报生成成功！', 'success');
+        } else {
+            showToast('生成失败：' + result.error, 'error');
+        }
+    })
+    .catch(error => {
+        generateModal.hide();
+        showToast('生成出错：' + error, 'error');
+    });
+}
+</script>
+{% endblock %}

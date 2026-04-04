@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% block title %}主力合约配置 - 期现交易策略汇报软件{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2 class="mb-0">主力合约配置</h2>
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addModal">
+        <i class="bi bi-plus-lg me-2"></i>添加配置
+    </button>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>品种</th>
+                        <th>主力合约代码</th>
+                        <th>生效日期</th>
+                        <th>失效日期</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if contracts %}
+                        {% for c in contracts %}
+                        <tr>
+                            <td>{{ c[1] }}</td>
+                            <td><span class="badge bg-primary">{{ c[2] }}</span></td>
+                            <td>{{ c[3] }}</td>
+                            <td>{{ c[4] }}</td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="4" class="text-center text-muted">暂无配置</td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="alert alert-info mt-4">
+    <i class="bi bi-info-circle me-2"></i>
+    <strong>说明：</strong>当策略中的期货合约与主力合约配置相同时，基差走势图将自动使用对应品种的主力连续合约数据。
+</div>
+
+<!-- 添加模态框 -->
+<div class="modal fade" id="addModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">添加主力合约配置</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="contractForm">
+                    <div class="mb-3">
+                        <label class="form-label">品种</label>
+                        <select class="form-select" id="variety" required>
+                            <option value="">请选择</option>
+                            <option value="螺纹钢">螺纹钢</option>
+                            <option value="热卷">热卷</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">主力合约代码</label>
+                        <input type="text" class="form-control" id="contract_code" placeholder="如：RB2510" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">生效日期</label>
+                        <input type="date" class="form-control" id="effective_date" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">失效日期</label>
+                        <input type="date" class="form-control" id="expiry_date" required>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveContract()">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function saveContract() {
+    const saveBtn = document.querySelector('#addModal .btn-primary');
+    const data = {
+        variety: document.getElementById('variety').value,
+        contract_code: document.getElementById('contract_code').value,
+        effective_date: document.getElementById('effective_date').value,
+        expiry_date: document.getElementById('expiry_date').value
+    };
+    
+    if (!data.variety || !data.contract_code || !data.effective_date || !data.expiry_date) {
+        showToast('请填写所有字段！', 'warning', '表单验证');
+        return;
+    }
+    
+    showLoading(saveBtn, '保存中...');
+    
+    fetch('/api/main-contracts', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(result => {
+        hideLoading(saveBtn);
+        if (result.success) {
+            bootstrap.Modal.getInstance(document.getElementById('addModal')).hide();
+            showToast('主力合约配置保存成功！', 'success', '保存成功');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast('保存失败：' + result.error, 'error', '保存失败');
+        }
+    })
+    .catch(error => {
+        hideLoading(saveBtn);
+        showToast('保存出错：' + error, 'error', '系统错误');
+    });
+}
+</script>
+{% endblock %}

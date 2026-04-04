@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>{% block title %}期现交易策略汇报软件{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #1e3a5f;
+            --secondary-color: #4a5568;
+            --accent-color: #c9a227;
+            --bg-light: #f0f4f8;
+            --border-color: #e2e8f0;
+            --success-color: #059669;
+            --danger-color: #dc2626;
+            --warning-color: #d97706;
+        }
+        
+        * {
+            font-family: "PingFang SC", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+        
+        body {
+            background-color: var(--bg-light);
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        
+        .navbar {
+            background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 100%);
+            box-shadow: 0 4px 20px rgba(30, 58, 95, 0.3);
+            padding: 0.8rem 1.5rem;
+        }
+        
+        .navbar-brand {
+            font-weight: 600;
+            font-size: 1.4rem;
+            letter-spacing: 1px;
+        }
+        
+        .navbar-brand {
+            font-weight: 600;
+            font-size: 1.3rem;
+        }
+        
+        .nav-link {
+            font-weight: 500;
+            padding: 0.8rem 1.2rem !important;
+            transition: all 0.3s;
+        }
+        
+        .nav-link:hover {
+            background-color: rgba(255,255,255,0.1);
+        }
+        
+        .sidebar {
+            background: white;
+            min-height: calc(100vh - 70px);
+            border-right: 1px solid var(--border-color);
+            padding: 1rem 0;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.05);
+        }
+        
+        .sidebar .nav-link {
+            color: #64748b;
+            border-radius: 0 8px 8px 0;
+            padding: 0.9rem 1.5rem !important;
+            margin: 0.2rem 0.8rem;
+            border-left: none;
+            transition: all 0.3s ease;
+            font-weight: 500;
+        }
+        
+        .sidebar .nav-link:hover {
+            background-color: #f1f5f9;
+            color: var(--primary-color);
+            transform: translateX(5px);
+        }
+        
+        .sidebar .nav-link.active {
+            background: linear-gradient(90deg, rgba(30, 58, 95, 0.1) 0%, rgba(30, 58, 95, 0.05) 100%);
+            color: var(--primary-color);
+            font-weight: 600;
+            border-right: 3px solid var(--primary-color);
+        }
+        
+        .sidebar .nav-link i {
+            margin-right: 0.8rem;
+            font-size: 1.1rem;
+            width: 24px;
+            text-align: center;
+        }
+        
+        .main-content {
+            padding: 2rem;
+        }
+        
+        .card {
+            border: none;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+            border-radius: 12px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(0,0,0,0.1);
+        }
+        
+        .card-header {
+            background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+            border-bottom: 1px solid #e2e8f0;
+            font-weight: 600;
+            color: var(--primary-color);
+            padding: 1.2rem 1.5rem;
+            border-radius: 12px 12px 0 0 !important;
+            font-size: 1.05rem;
+        }
+        
+        .btn {
+            border-radius: 8px;
+            font-weight: 500;
+            padding: 0.6rem 1.2rem;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 100%);
+            border: none;
+            box-shadow: 0 4px 15px rgba(30, 58, 95, 0.3);
+        }
+        
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #152a45 0%, #1e3a5f 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(30, 58, 95, 0.4);
+        }
+        
+        .btn-accent {
+            background: linear-gradient(135deg, #c9a227 0%, #d4b43a 100%);
+            border: none;
+            color: white;
+            box-shadow: 0 4px 15px rgba(201, 162, 39, 0.3);
+        }
+        
+        .btn-accent:hover {
+            background: linear-gradient(135deg, #b08d1f 0%, #c9a227 100%);
+            color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(201, 162, 39, 0.4);
+        }
+        
+        .btn-success {
+            background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+            border: none;
+            box-shadow: 0 4px 15px rgba(5, 150, 105, 0.3);
+        }
+        
+        .btn-success:hover {
+            background: linear-gradient(135deg, #047857 0%, #059669 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(5, 150, 105, 0.4);
+        }
+        
+        .btn-outline-primary {
+            border: 2px solid #1e3a5f;
+            color: #1e3a5f;
+            background: transparent;
+        }
+        
+        .btn-outline-primary:hover {
+            background: #1e3a5f;
+            color: white;
+            transform: translateY(-2px);
+        }
+        
+        .table thead th {
+            background-color: var(--primary-color);
+            color: white;
+            font-weight: 500;
+            border: none;
+        }
+        
+        .table tbody tr:hover {
+            background-color: var(--bg-light);
+        }
+        
+        .stat-card {
+            background: white;
+            border-radius: 12px;
+            padding: 1.8rem;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+            border-left: 4px solid var(--primary-color);
+            transition: all 0.3s ease;
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 30px rgba(0,0,0,0.1);
+        }
+        
+        .stat-card.success {
+            border-left-color: #059669;
+        }
+        
+        .stat-card.warning {
+            border-left-color: #d97706;
+        }
+        
+        .stat-card.danger {
+            border-left-color: #dc2626;
+        }
+        
+        .stat-card.info {
+            border-left-color: #0891b2;
+        }
+        
+        .stat-value {
+            font-size: 2.2rem;
+            font-weight: 700;
+            color: var(--primary-color);
+            margin-bottom: 0.3rem;
+        }
+        
+        .stat-label {
+            color: #64748b;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+        
+        .form-label {
+            font-weight: 500;
+            color: var(--secondary-color);
+        }
+        
+        .form-control:focus,
+        .form-select:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 0.2rem rgba(44, 82, 130, 0.15);
+        }
+        
+        .modal-header {
+            background-color: var(--primary-color);
+            color: white;
+        }
+        
+        .modal-header .btn-close {
+            filter: invert(1);
+        }
+        
+        .alert {
+            border: none;
+            border-radius: 6px;
+        }
+        
+        .badge-strategy {
+            padding: 0.4rem 0.8rem;
+            border-radius: 4px;
+            font-weight: 500;
+            font-size: 0.85rem;
+        }
+        
+        .badge-hedge {
+            background-color: #bee3f8;
+            color: #2b6cb0;
+        }
+        
+        .badge-basis {
+            background-color: #feebc8;
+            color: #c05621;
+        }
+        
+        .badge-trend {
+            background-color: #c6f6d5;
+            color: #276749;
+        }
+        
+        .upload-area {
+            border: 2px dashed #cbd5e1;
+            border-radius: 12px;
+            padding: 3rem;
+            text-align: center;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            background: linear-gradient(135deg, #f8fafc 0%, #ffffff 100%);
+        }
+        
+        .upload-area:hover {
+            border-color: var(--primary-color);
+            background: linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(30, 58, 95, 0.1);
+        }
+        
+        .upload-area i {
+            font-size: 3rem;
+            color: #94a3b8;
+            margin-bottom: 1rem;
+            transition: all 0.3s;
+        }
+        
+        .upload-area:hover i {
+            color: var(--primary-color);
+        }
+        
+        /* Toast通知样式 */
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 9999;
+        }
+        
+        .toast {
+            min-width: 300px;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.15);
+            border: none;
+            overflow: hidden;
+        }
+        
+        .toast-header {
+            border: none;
+            padding: 0.8rem 1rem;
+            font-weight: 600;
+        }
+        
+        .toast-body {
+            padding: 1rem;
+            font-size: 0.95rem;
+        }
+        
+        .toast-success .toast-header {
+            background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+            color: white;
+        }
+        
+        .toast-error .toast-header {
+            background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%);
+            color: white;
+        }
+        
+        .toast-warning .toast-header {
+            background: linear-gradient(135deg, #d97706 0%, #f59e0b 100%);
+            color: white;
+        }
+        
+        .toast-info .toast-header {
+            background: linear-gradient(135deg, #0891b2 0%, #06b6d4 100%);
+            color: white;
+        }
+        
+        /* 表单样式优化 */
+        .form-control, .form-select {
+            border-radius: 8px;
+            border: 2px solid #e2e8f0;
+            padding: 0.6rem 1rem;
+            font-size: 0.95rem;
+            transition: all 0.3s ease;
+        }
+        
+        .form-control:focus, .form-select:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 4px rgba(30, 58, 95, 0.1);
+        }
+        
+        .form-label {
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 0.5rem;
+            font-size: 0.9rem;
+        }
+        
+        /* 表格样式优化 */
+        .table {
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        
+        .table thead th {
+            background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 100%);
+            color: white;
+            font-weight: 600;
+            border: none;
+            padding: 1rem;
+            font-size: 0.9rem;
+        }
+        
+        .table tbody tr {
+            transition: background-color 0.2s;
+        }
+        
+        .table tbody tr:hover {
+            background-color: #f8fafc;
+        }
+        
+        .table td {
+            padding: 1rem;
+            vertical-align: middle;
+            border-color: #e2e8f0;
+        }
+        
+        /* 徽章样式 */
+        .badge {
+            padding: 0.5rem 0.8rem;
+            border-radius: 6px;
+            font-weight: 500;
+            font-size: 0.8rem;
+        }
+        
+        /* 模态框优化 */
+        .modal-content {
+            border-radius: 16px;
+            border: none;
+            box-shadow: 0 25px 60px rgba(0,0,0,0.2);
+        }
+        
+        .modal-header {
+            background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 100%);
+            color: white;
+            border-radius: 16px 16px 0 0;
+            padding: 1.2rem 1.5rem;
+        }
+        
+        .modal-header .btn-close {
+            filter: invert(1);
+            opacity: 0.8;
+        }
+        
+        .modal-body {
+            padding: 1.5rem;
+        }
+        
+        /* 加载动画 */
+        .spinner-border {
+            width: 1.5rem;
+            height: 1.5rem;
+        }
+        
+        {% block extra_css %}{% endblock %}
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">
+                <i class="bi bi-graph-up-arrow me-2"></i>期现交易策略汇报软件
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/report">
+                            <i class="bi bi-file-earmark-pdf me-1"></i>生成汇报
+                        </a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid">
+        <div class="row">
+            <div class="col-md-2 sidebar">
+                <ul class="nav flex-column">
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.path == '/' %}active{% endif %}" href="/">
+                            <i class="bi bi-house-door"></i>首页
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.path == '/upload' %}active{% endif %}" href="/upload">
+                            <i class="bi bi-cloud-upload"></i>数据上传
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.path == '/strategies' %}active{% endif %}" href="/strategies">
+                            <i class="bi bi-diagram-3"></i>策略管理
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.path == '/summary' %}active{% endif %}" href="/summary">
+                            <i class="bi bi-table"></i>执行汇总
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.path == '/report' %}active{% endif %}" href="/report">
+                            <i class="bi bi-file-earmark-text"></i>策略汇报
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.path == '/main-contracts' %}active{% endif %}" href="/main-contracts">
+                            <i class="bi bi-gear"></i>主力合约配置
+                        </a>
+                    </li>
+                </ul>
+            </div>
+            
+            <div class="col-md-10 main-content">
+                {% block content %}{% endblock %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast容器 -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <script>
+        // Toast通知函数
+        function showToast(message, type = 'success', title = '') {
+            const container = document.getElementById('toastContainer');
+            
+            // 默认标题
+            const titles = {
+                'success': '✓ 成功',
+                'error': '✗ 错误',
+                'warning': '⚠ 警告',
+                'info': 'ℹ 提示'
+            };
+            
+            const toastId = 'toast-' + Date.now();
+            
+            const toastHtml = `
+                <div class="toast toast-${type}" id="${toastId}" role="alert" aria-live="assertive" aria-atomic="true" data-bs-delay="3000">
+                    <div class="toast-header">
+                        <strong class="me-auto">${title || titles[type]}</strong>
+                        <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+                    </div>
+                    <div class="toast-body">
+                        ${message}
+                    </div>
+                </div>
+            `;
+            
+            container.insertAdjacentHTML('beforeend', toastHtml);
+            
+            const toastElement = document.getElementById(toastId);
+            const toast = new bootstrap.Toast(toastElement);
+            toast.show();
+            
+            // 自动移除
+            toastElement.addEventListener('hidden.bs.toast', function() {
+                toastElement.remove();
+            });
+        }
+        
+        // 显示加载中
+        function showLoading(element, text = '处理中...') {
+            element.disabled = true;
+            element.dataset.originalText = element.innerHTML;
+            element.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>${text}`;
+        }
+        
+        // 隐藏加载
+        function hideLoading(element) {
+            element.disabled = false;
+            element.innerHTML = element.dataset.originalText || '保存';
+        }
+    </script>
+    
+    {% block extra_js %}{% endblock %}
+</body>
+</html>
