@@ -546,3 +546,7 @@ if __name__ == '__main__':
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
     app.run(debug=True, port=5000, host='0.0.0.0')
+
+
+# Vercel 入口
+app = app
