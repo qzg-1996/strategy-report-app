@@ -356,49 +356,10 @@ class BasisChartCalculator:
         return sorted(result, key=lambda x: x['date'])
     
     def _filter_by_time_range(self, data, strategy):
-        """根据合约类型过滤时间范围
-        - 主力合约(螺纹主链/热卷主链): 近1年
-        - 其他合约: 近3个月
+        """不过滤时间范围，返回所有可用数据
+        由前端通过日期选择器来控制显示范围
         """
-        if not data:
-            return data
-        
-        # 判断是否是主力合约
-        futures_contract = strategy.get('futures_contract', '')
-        is_main_contract = futures_contract in ['螺纹主链', '热卷主链', 'RB主链', 'HC主链']
-        
-        # 获取最新日期
-        latest_date = None
-        for d in data:
-            try:
-                d_date = datetime.strptime(d['date'], '%Y-%m-%d')
-                if latest_date is None or d_date > latest_date:
-                    latest_date = d_date
-            except:
-                continue
-        
-        if not latest_date:
-            return data
-        
-        # 计算起始日期
-        if is_main_contract:
-            # 主力合约：近1年
-            start_date = latest_date - __import__('datetime').timedelta(days=365)
-        else:
-            # 其他合约：近3个月
-            start_date = latest_date - __import__('datetime').timedelta(days=90)
-        
-        # 过滤数据
-        filtered = []
-        for d in data:
-            try:
-                d_date = datetime.strptime(d['date'], '%Y-%m-%d')
-                if d_date >= start_date:
-                    filtered.append(d)
-            except:
-                continue
-        
-        return filtered
+        return data
     
     def _generate_mock_data(self, strategy):
         """生成模拟数据（当没有真实价格数据时）"""

@@ -6,6 +6,7 @@
     <title>钢晨钢材策略汇报系统</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
     <style>
         :root {
             --primary: #1a237e;
@@ -881,12 +882,14 @@
             position: relative;
             background: white;
             padding: 10px;
-            min-height: 350px;
+            min-height: 400px;
+            border-radius: 8px;
         }
         
-        .chart-canvas-container canvas {
+        .chart-canvas-container > div {
             width: 100% !important;
             height: 100% !important;
+            min-height: 400px;
         }
         
         .chart-legend-bar {
@@ -1904,12 +1907,14 @@
                                         </div>
                                     </div>
                                     <div class="chart-canvas-container">
-                                        <canvas id="basisChart-${s.id}"></canvas>
+                                        <div id="basisChart-${s.id}" style="width:100%;height:400px;"></div>
                                     </div>
                                     <div class="chart-legend-bar">
                                         <div class="legend-left">
-                                            <span><i class="bi bi-square-fill" style="color: #1976d2;"></i> 正基差</span>
-                                            <span><i class="bi bi-square-fill" style="color: #d32f2f;"></i> 负基差</span>
+                                            <span><i class="bi bi-square-fill" style="color: #90caf9;"></i> 基差/价差</span>
+                                            <span style="margin-left: 12px;"><i class="bi bi-dash-lg" style="color: #d32f2f;"></i> 最新值</span>
+                                            <span style="margin-left: 12px;color: #757575;font-size: 11px;"><i class="bi bi-mouse"></i> 悬停查看</span>
+                                            <span style="margin-left: 12px;color: #757575;font-size: 11px;"><i class="bi bi-calendar"></i> 可调时间范围</span>
                                         </div>
                                         <div class="legend-center" id="chart-stats-${s.id}">
                                             最高: -- | 最低: -- | 平均: --
@@ -2076,15 +2081,8 @@
         
         // 加载基差走势图
         async function loadBasisChart(strategyId) {
-            const canvas = document.getElementById(`basisChart-${strategyId}`);
-            if (!canvas) return;
-            
-            // 设置canvas大小为父容器大小
-            const container = canvas.parentElement;
-            canvas.width = container.clientWidth;
-            canvas.height = container.clientHeight;
-            
-            const ctx = canvas.getContext('2d');
+            const chartContainer = document.getElementById(`basisChart-${strategyId}`);
+            if (!chartContainer) return;
             
             // 从后端获取基差数据
             try {
@@ -2117,14 +2115,40 @@
                 chartDataMap[strategyId] = basisData;
                 
                 // 设置日期选择器的默认值
+                // 范围：全部可用数据
+                // 默认显示：最近90天（如果数据足够）
                 if (basisData.length > 0) {
                     const startInput = document.getElementById(`chart-start-${strategyId}`);
                     const endInput = document.getElementById(`chart-end-${strategyId}`);
-                    if (startInput && !startInput.value) {
-                        startInput.value = basisData[0].date;
+                    
+                    // 设置 min/max 限制
+                    const earliestDate = basisData[0].date;
+                    const latestDate = basisData[basisData.length - 1].date;
+                    
+                    if (startInput) {
+                        startInput.min = earliestDate;
+                        startInput.max = latestDate;
                     }
-                    if (endInput && !endInput.value) {
-                        endInput.value = basisData[basisData.length - 1].date;
+                    if (endInput) {
+                        endInput.min = earliestDate;
+                        endInput.max = latestDate;
+                    }
+                    
+                    // 默认显示最近90天
+                    if (!startInput.value || !endInput.value) {
+                        // 计算90天前的日期
+                        const latest = new Date(latestDate);
+                        const ninetyDaysAgo = new Date(latest);
+                        ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+                        
+                        // 格式化日期
+                        const formatDate = (d) => d.toISOString().split('T')[0];
+                        const defaultStart = ninetyDaysAgo < new Date(earliestDate) 
+                            ? earliestDate 
+                            : formatDate(ninetyDaysAgo);
+                        
+                        startInput.value = defaultStart;
+                        endInput.value = latestDate;
                     }
                 }
                 
@@ -2144,10 +2168,9 @@
         
         // 更新图表显示（根据日期范围）
         function updateChartDisplay(strategyId) {
-            const canvas = document.getElementById(`basisChart-${strategyId}`);
-            if (!canvas) return;
+            const chartContainer = document.getElementById(`basisChart-${strategyId}`);
+            if (!chartContainer) return;
             
-            const ctx = canvas.getContext('2d');
             const fullData = chartDataMap[strategyId];
             if (!fullData || fullData.length === 0) return;
             
@@ -2161,34 +2184,30 @@
             // 过滤数据
             const filteredData = fullData.filter(d => d.date >= startDate && d.date <= endDate);
             
-            if (filteredData.length === 0) {
-                // 如果没有数据，显示提示
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                ctx.fillStyle = '#757575';
-                ctx.font = '14px sans-serif';
-                ctx.textAlign = 'center';
-                ctx.fillText('所选日期范围内无数据', canvas.width / 2, canvas.height / 2);
-                return;
-            }
-            
-            // 绘制图表
-            drawBasisChart(ctx, canvas.width, canvas.height, filteredData);
+            // 绘制图表（使用 ECharts）
+            drawBasisChart(strategyId, filteredData);
             
             // 更新统计信息
-            const basisValues = filteredData.map(d => d.basis);
-            const maxVal = Math.max(...basisValues);
-            const minVal = Math.min(...basisValues);
-            const avgVal = basisValues.reduce((a, b) => a + b, 0) / basisValues.length;
-            
-            const statsEl = document.getElementById(`chart-stats-${strategyId}`);
-            if (statsEl) {
-                statsEl.innerHTML = `最高: <strong>${maxVal.toFixed(2)}</strong> | 最低: <strong>${minVal.toFixed(2)}</strong> | 平均: <strong>${avgVal.toFixed(2)}</strong>`;
-            }
-            
-            // 更新时间范围显示
-            const timeRangeEl = document.getElementById(`time-range-${strategyId}`);
-            if (timeRangeEl) {
-                timeRangeEl.textContent = `${filteredData[0].date} 至 ${filteredData[filteredData.length - 1].date} (${filteredData.length}个交易日)`;
+            if (filteredData.length > 0) {
+                const basisValues = filteredData.map(d => d.basis);
+                const maxVal = Math.max(...basisValues);
+                const minVal = Math.min(...basisValues);
+                const avgVal = basisValues.reduce((a, b) => a + b, 0) / basisValues.length;
+                
+                const statsEl = document.getElementById(`chart-stats-${strategyId}`);
+                if (statsEl) {
+                    statsEl.innerHTML = `最高: <strong>${maxVal.toFixed(2)}</strong> | 最低: <strong>${minVal.toFixed(2)}</strong> | 平均: <strong>${avgVal.toFixed(2)}</strong>`;
+                }
+                
+                // 更新时间范围显示
+                const timeRangeEl = document.getElementById(`time-range-${strategyId}`);
+                if (timeRangeEl) {
+                    timeRangeEl.textContent = `${filteredData[0].date} 至 ${filteredData[filteredData.length - 1].date} (${filteredData.length}个交易日)`;
+                }
+            } else {
+                // 无数据提示
+                const statsEl = document.getElementById(`chart-stats-${strategyId}`);
+                if (statsEl) statsEl.innerHTML = '<span style="color:#999;">所选日期范围内无数据</span>';
             }
         }
         
@@ -2197,127 +2216,175 @@
             updateChartDisplay(strategyId);
         }
         
-        // 绘制基差走势图（柱状图）
-        function drawBasisChart(ctx, width, height, data) {
-            // 清空画布
-            ctx.clearRect(0, 0, width, height);
+        // ECharts 实例映射
+        const chartInstances = {};
+        
+        // 绘制基差走势图（使用 ECharts）
+        function drawBasisChart(strategyId, data) {
+            const chartContainer = document.getElementById(`basisChart-${strategyId}`);
+            if (!chartContainer) return;
+            
+            // 销毁旧实例
+            if (chartInstances[strategyId]) {
+                chartInstances[strategyId].dispose();
+            }
+            
+            // 初始化 ECharts
+            const chart = echarts.init(chartContainer);
+            chartInstances[strategyId] = chart;
             
             if (!data || data.length === 0) {
-                ctx.fillStyle = '#757575';
-                ctx.font = '14px sans-serif';
-                ctx.textAlign = 'center';
-                ctx.fillText('暂无数据', width / 2, height / 2);
+                chart.setOption({
+                    title: { text: '暂无数据', left: 'center', top: 'center', textStyle: { color: '#999' } }
+                });
                 return;
             }
             
-            const padding = { top: 40, right: 40, bottom: 60, left: 70 };
-            const chartWidth = width - padding.left - padding.right;
-            const chartHeight = height - padding.top - padding.bottom;
+            const dates = data.map(d => d.date);
+            const basisValues = data.map(d => d.basis);
+            const spotValues = data.map(d => d.spot || d.spot_price || 0);
+            const futuresValues = data.map(d => d.futures || d.futures_price || 0);
             
-            // 找出数据范围
-            let minBasis = Infinity, maxBasis = -Infinity;
-            data.forEach(d => {
-                minBasis = Math.min(minBasis, d.basis);
-                maxBasis = Math.max(maxBasis, d.basis);
-            });
+            // 最新值
+            const currentBasis = basisValues[basisValues.length - 1];
+            const currentDate = dates[dates.length - 1];
             
-            // 留一些边距
-            const basisRange = (maxBasis - minBasis) || 1;
-            const yMin = minBasis - basisRange * 0.1;
-            const yMax = maxBasis + basisRange * 0.1;
-            const yRange = yMax - yMin;
+            const option = {
+                backgroundColor: 'transparent',
+                // 提示框
+                tooltip: {
+                    trigger: 'axis',
+                    axisPointer: {
+                        type: 'shadow',
+                        shadowStyle: { color: 'rgba(0,0,0,0.05)' }
+                    },
+                    backgroundColor: 'rgba(255,255,255,0.95)',
+                    borderColor: '#e0e0e0',
+                    borderWidth: 1,
+                    padding: [12, 16],
+                    textStyle: { color: '#333', fontSize: 13 },
+                    extraCssText: 'box-shadow: 0 4px 20px rgba(0,0,0,0.15); border-radius: 8px;',
+                    formatter: function(params) {
+                        const idx = params[0].dataIndex;
+                        const date = dates[idx];
+                        const basis = basisValues[idx];
+                        const spot = spotValues[idx];
+                        const futures = futuresValues[idx];
+                        
+                        return `
+                            <div style="font-weight:600;margin-bottom:8px;color:#1a237e;">${date}</div>
+                            <div style="display:flex;align-items:center;margin:4px 0;">
+                                <span style="display:inline-block;width:10px;height:10px;background:#7bbfea;border-radius:2px;margin-right:8px;"></span>
+                                <span style="flex:1;">基差：</span>
+                                <span style="font-weight:600;color:${basis >= 0 ? '#1976d2' : '#d32f2f'};">${basis.toFixed(2)}</span>
+                            </div>
+                            <div style="display:flex;align-items:center;margin:4px 0;color:#666;font-size:12px;">
+                                <span style="flex:1;padding-left:18px;">现货/远期：</span>
+                                <span>${spot ? spot.toFixed(2) : '-'}</span>
+                            </div>
+                            <div style="display:flex;align-items:center;margin:4px 0;color:#666;font-size:12px;">
+                                <span style="flex:1;padding-left:18px;">期货价格：</span>
+                                <span>${futures ? futures.toFixed(2) : '-'}</span>
+                            </div>
+                        `;
+                    }
+                },
+                // 网格
+                grid: {
+                    left: 60,
+                    right: 40,
+                    top: 50,
+                    bottom: 60,
+                    containLabel: false
+                },
+                // X轴 - 日期横向显示，根据数据量智能控制标签密度
+                xAxis: {
+                    type: 'category',
+                    data: dates,
+                    axisLine: { lineStyle: { color: '#e0e0e0' } },
+                    axisLabel: { 
+                        color: '#757575', 
+                        fontSize: 10,
+                        interval: function(index, value) {
+                            // 根据数据量决定显示间隔
+                            const total = dates.length;
+                            if (total <= 20) return true;  // 全部显示
+                            if (total <= 60) return index % 5 === 0;  // 每5个显示1个
+                            if (total <= 120) return index % 10 === 0;  // 每10个显示1个
+                            return index % 20 === 0;  // 每20个显示1个
+                        },
+                        rotate: 0,  // 横向显示
+                        formatter: function(value) {
+                            // 显示 MM-DD 格式
+                            return value.substring(5);
+                        }
+                    },
+                    axisTick: { show: true, alignWithLabel: true }
+                },
+                // Y轴
+                yAxis: {
+                    type: 'value',
+                    name: '基差/价差',
+                    nameTextStyle: { color: '#757575', fontSize: 12 },
+                    axisLine: { show: false },
+                    axisLabel: { color: '#757575', fontSize: 11 },
+                    splitLine: { lineStyle: { color: '#f0f0f0', type: 'dashed' } }
+                },
+                // 系列
+                series: [
+                    {
+                        name: '基差',
+                        type: 'bar',
+                        data: basisValues,
+                        // 根据数据量动态调整柱子宽度
+                        barWidth: dates.length > 100 ? '40%' : (dates.length > 50 ? '50%' : '60%'),
+                        itemStyle: {
+                            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                                { offset: 0, color: '#90caf9' },
+                                { offset: 1, color: '#bbdefb' }
+                            ]),
+                            borderRadius: [4, 4, 0, 0]
+                        },
+                        emphasis: {
+                            itemStyle: {
+                                color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                                    { offset: 0, color: '#64b5f6' },
+                                    { offset: 1, color: '#90caf9' }
+                                ])
+                            }
+                        },
+                        animationDuration: 800,
+                        animationEasing: 'cubicOut'
+                    },
+                    {
+                        name: '最新值',
+                        type: 'line',
+                        markLine: {
+                            symbol: 'none',
+                            label: {
+                                position: 'end',
+                                formatter: '{c}',
+                                color: '#d32f2f',
+                                fontSize: 12,
+                                fontWeight: 'bold'
+                            },
+                            lineStyle: {
+                                color: '#d32f2f',
+                                type: 'dashed',
+                                width: 2
+                            },
+                            data: [
+                                { yAxis: currentBasis, name: '最新' }
+                            ]
+                        }
+                    }
+                ]
+            };
             
-            // 绘制网格线和Y轴标签
-            ctx.strokeStyle = '#e0e0e0';
-            ctx.lineWidth = 1;
-            ctx.fillStyle = '#757575';
-            ctx.font = '11px sans-serif';
-            ctx.textAlign = 'right';
+            chart.setOption(option);
             
-            for (let i = 0; i <= 5; i++) {
-                const y = padding.top + chartHeight * i / 5;
-                
-                // 网格线
-                ctx.beginPath();
-                ctx.moveTo(padding.left, y);
-                ctx.lineTo(width - padding.right, y);
-                ctx.stroke();
-                
-                // Y轴标签
-                const value = yMax - yRange * i / 5;
-                ctx.fillText(value.toFixed(0), padding.left - 10, y + 4);
-            }
-            
-            // 绘制零线（如果范围内包含0）
-            const zeroY = padding.top + chartHeight * (yMax - 0) / yRange;
-            if (yMin <= 0 && yMax >= 0) {
-                ctx.strokeStyle = '#666';
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                ctx.moveTo(padding.left, zeroY);
-                ctx.lineTo(width - padding.right, zeroY);
-                ctx.stroke();
-            }
-            
-            // 绘制柱状图
-            const barWidth = Math.max(2, chartWidth / data.length * 0.8); // 柱子宽度
-            const gap = chartWidth / data.length * 0.2;
-            
-            data.forEach((d, i) => {
-                const x = padding.left + i * (chartWidth / data.length) + gap / 2;
-                const barHeight = Math.abs(d.basis) / yRange * chartHeight;
-                
-                // 根据正负值确定颜色
-                if (d.basis >= 0) {
-                    ctx.fillStyle = '#1976d2'; // 正值蓝色
-                } else {
-                    ctx.fillStyle = '#d32f2f'; // 负值红色
-                }
-                
-                // 绘制柱子
-                if (d.basis >= 0) {
-                    ctx.fillRect(x, zeroY - barHeight, barWidth, barHeight);
-                } else {
-                    ctx.fillRect(x, zeroY, barWidth, barHeight);
-                }
-            });
-            
-            // X轴标签（日期）- 智能显示
-            ctx.fillStyle = '#757575';
-            ctx.font = '10px Microsoft YaHei, sans-serif';
-            ctx.textAlign = 'center';
-            
-            // 计算合适的标签间隔
-            const maxLabels = Math.floor(chartWidth / 50); // 每50像素一个标签
-            const labelStep = Math.max(1, Math.ceil(data.length / maxLabels));
-            
-            for (let i = 0; i < data.length; i += labelStep) {
-                const x = padding.left + i * (chartWidth / data.length) + (chartWidth / data.length) / 2;
-                const date = data[i].date;
-                // 显示 MM-DD 格式
-                const dateLabel = date.substring(5);
-                
-                // 保存状态
-                ctx.save();
-                ctx.translate(x, height - 20);
-                // 如果标签太密，旋转45度
-                if (data.length > 30) {
-                    ctx.rotate(-Math.PI / 4);
-                    ctx.textAlign = 'right';
-                }
-                ctx.fillText(dateLabel, 0, 0);
-                ctx.restore();
-            }
-            
-            // 绘制Y轴标题
-            ctx.save();
-            ctx.translate(20, height / 2);
-            ctx.rotate(-Math.PI / 2);
-            ctx.textAlign = 'center';
-            ctx.fillStyle = '#757575';
-            ctx.font = '12px Microsoft YaHei, sans-serif';
-            ctx.fillText('基差/价差', 0, 0);
-            ctx.restore();
+            // 响应式
+            window.addEventListener('resize', () => chart.resize());
         }
         
         // 保存策略复盘

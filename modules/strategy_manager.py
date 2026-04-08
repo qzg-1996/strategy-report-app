@@ -205,7 +205,9 @@ class StrategyManager:
                 # 远期-现货需要额外的信息
                 if business_type == '远期-现货':
                     record['spot_lots'] = spot_lots
-                    record['spot_variety'] = row[22] if row[22] else strategy.get('spot_variety', '')
+                    record['spot_variety'] = row[4] if row[4] else strategy.get('spot_variety', '')  # 品种1 (D列)
+                    record['forward_variety'] = row[10] if row[10] else strategy.get('forward_variety', '')  # 品种2 (K列)
+                    record['variety2_open_price'] = float(row[13]) if row[13] else 0  # 品种2建仓价 (N列)
                 
                 position_records.append(record)
         
@@ -715,7 +717,9 @@ class StrategyManager:
         交易记录Excel列说明：
         - row[5]: 期货合约
         - row[6]: 期货方向
-        - row[22]: 现货品种
+        - row[22]: 现货品种（期货-现货/期货-远期）
+        - row[4]: 品种1（远期-现货交易记录）
+        - row[10]: 品种2（远期-现货交易记录，K列）
         """
         futures_contract = strategy.get('futures_contract', '')
         spot_variety = strategy.get('spot_variety', '')
@@ -737,13 +741,19 @@ class StrategyManager:
                 str(row[6]) == str(futures_direction)
             )
         elif business_type == '远期-现货':
-            # 远期-现货（两个现货品种价差）：匹配现货品种1或品种2，同时匹配方向
+            # 远期-现货（两个现货品种价差）：必须同时匹配品种1和品种2
+            # 品种1在Excel D列（row[4]），品种2在Excel K列（row[10]）
             variety2 = strategy.get('forward_variety', '')
-            return (
-                (str(row[22]) == str(spot_variety) or
-                 str(row[22]) == str(variety2)) and
-                str(row[6]) == str(futures_direction)
+            row_variety1 = str(row[4]) if row[4] else ''  # 品种1
+            row_variety2 = str(row[10]) if row[10] else ''  # 品种2（K列）
+            
+            # 同时匹配品种1和品种2（顺序可以互换）
+            variety_match = (
+                (row_variety1 == spot_variety and row_variety2 == variety2) or
+                (row_variety1 == variety2 and row_variety2 == spot_variety)
             )
+            
+            return variety_match and str(row[6]) == str(futures_direction)
         elif business_type == '投机':
             # 投机：只匹配期货合约
             return str(row[5]).upper() == str(futures_contract).upper()
