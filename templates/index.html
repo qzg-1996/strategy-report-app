@@ -1810,6 +1810,80 @@
             document.getElementById('dynamicFields').innerHTML = html;
         }
 
+        // 根据业务类型生成基本要素字段
+        function getBusinessTypeFields(s) {
+            const type = s.business_type || '';
+            
+            if (type === '期货-现货') {
+                return `
+                    <div class="info-item"><label>期货合约</label><span>${s.futures_contract || '-'}</span></div>
+                    <div class="info-item"><label>现货品种</label><span>${s.spot_variety || '-'}</span></div>
+                `;
+            } else if (type === '期货-远期') {
+                return `
+                    <div class="info-item"><label>期货合约</label><span>${s.futures_contract || '-'}</span></div>
+                    <div class="info-item"><label>远期品种</label><span>${s.spot_variety || '-'}</span></div>
+                `;
+            } else if (type === '期货-期货') {
+                return `
+                    <div class="info-item"><label>期货合约1</label><span>${s.futures_contract || '-'}</span></div>
+                    <div class="info-item"><label>期货合约2</label><span>${s.futures_contract2 || '-'}</span></div>
+                `;
+            } else if (type === '远期-现货') {
+                return `
+                    <div class="info-item"><label>品种1</label><span>${s.spot_variety || '-'}</span></div>
+                    <div class="info-item"><label>品种2</label><span>${s.forward_variety || '-'}</span></div>
+                `;
+            } else if (type === '投机') {
+                return `
+                    <div class="info-item"><label>期货合约</label><span>${s.futures_contract || '-'}</span></div>
+                    <div class="info-item"><label>合约2</label><span>${s.futures_contract2 || '-'}</span></div>
+                `;
+            } else {
+                // 默认显示
+                return `
+                    <div class="info-item"><label>期货合约</label><span>${s.futures_contract || '-'}</span></div>
+                    <div class="info-item"><label>现货/远期</label><span>${s.spot_variety || '-'}</span></div>
+                `;
+            }
+        }
+
+        // 根据业务类型生成图表信息栏字段
+        function getChartInfoFields(s) {
+            const type = s.business_type || '';
+            
+            if (type === '期货-现货') {
+                return `
+                    <span class="info-item">期货: <strong>${s.futures_contract || '-'}</strong></span>
+                    <span class="info-item">现货: <strong>${s.spot_variety || '-'}</strong></span>
+                `;
+            } else if (type === '期货-远期') {
+                return `
+                    <span class="info-item">期货: <strong>${s.futures_contract || '-'}</strong></span>
+                    <span class="info-item">远期: <strong>${s.spot_variety || '-'}</strong></span>
+                `;
+            } else if (type === '期货-期货') {
+                return `
+                    <span class="info-item">合约1: <strong>${s.futures_contract || '-'}</strong></span>
+                    <span class="info-item">合约2: <strong>${s.futures_contract2 || '-'}</strong></span>
+                `;
+            } else if (type === '远期-现货') {
+                return `
+                    <span class="info-item">品种1: <strong>${s.spot_variety || '-'}</strong></span>
+                    <span class="info-item">品种2: <strong>${s.forward_variety || '-'}</strong></span>
+                `;
+            } else if (type === '投机') {
+                return `
+                    <span class="info-item">合约: <strong>${s.futures_contract || '-'}</strong></span>
+                `;
+            } else {
+                return `
+                    <span class="info-item">期货: <strong>${s.futures_contract || '-'}</strong></span>
+                    <span class="info-item">现货: <strong>${s.spot_variety || '-'}</strong></span>
+                `;
+            }
+        }
+
         // 加载策略列表
         function loadStrategies() {
             fetch('/api/strategies')
@@ -1881,9 +1955,8 @@
                                     <div class="info-item"><label>策略名称</label><span>${s.strategy_name || '-'}</span></div>
                                     <div class="info-item"><label>策略类型</label><span>${s.strategy_type || '-'}</span></div>
                                     <div class="info-item"><label>业务类型</label><span>${s.business_type || '-'}</span></div>
-                                    <div class="info-item"><label>期货合约</label><span>${s.futures_contract || '-'}</span></div>
-                                    <div class="info-item"><label>期货方向</label><span>${s.futures_direction || '-'}</span></div>
-                                    <div class="info-item"><label>现货品种</label><span>${s.spot_variety || '-'}</span></div>
+                                    ${getBusinessTypeFields(s)}
+                                    <div class="info-item"><label>方向</label><span>${s.futures_direction || s.spot_direction || '-'}</span></div>
                                     <div class="info-item"><label>计划数量</label><span>${s.plan_quantity ? s.plan_quantity.toLocaleString() + '吨' : '-'}</span></div>
                                     <div class="info-item"><label>申请组织</label><span>${s.apply_org || '-'}</span></div>
                                     <div class="info-item"><label>创建时间</label><span>${s.created_at || '-'}</span></div>
@@ -1893,8 +1966,7 @@
                                 <div class="basis-chart-full">
                                     <div class="chart-info-bar">
                                         <div class="chart-info-left">
-                                            <span class="info-item">期货: <strong>${s.futures_contract || '-'}</strong></span>
-                                            <span class="info-item">现货: <strong>${s.spot_variety || '-'}</strong></span>
+                                            ${getChartInfoFields(s)}
                                             <span class="info-item">当前基差: <strong id="current-basis-${s.id}" style="color: #1976d2; font-size: 20px;">--</strong></span>
                                         </div>
                                         <div class="chart-info-right">

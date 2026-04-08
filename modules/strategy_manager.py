@@ -108,20 +108,35 @@ class StrategyManager:
         columns = [description[0] for description in cursor.description]
         strategies = [dict(zip(columns, row)) for row in cursor.fetchall()]
         
-        # 一次性读取所有交易记录
+        # 读取交易记录文件
         cursor.execute("SELECT file_path FROM data_files WHERE file_type = 'trade_record' ORDER BY upload_date DESC LIMIT 1")
-        result = cursor.fetchone()
+        trade_result = cursor.fetchone()
+        
+        # 读取远期-现货交易记录文件
+        cursor.execute("SELECT file_path FROM data_files WHERE file_type = 'forward_spot_record' ORDER BY upload_date DESC LIMIT 1")
+        forward_spot_result = cursor.fetchone()
+        
         conn.close()
         
         # 缓存交易记录数据
         all_trade_records = []
-        if result and os.path.exists(result[0]):
+        if trade_result and os.path.exists(trade_result[0]):
             try:
-                wb = openpyxl.load_workbook(result[0], data_only=True)
+                wb = openpyxl.load_workbook(trade_result[0], data_only=True)
                 ws = wb.active
                 all_trade_records = list(ws.iter_rows(min_row=3, values_only=True))
             except Exception as e:
                 print(f"读取交易记录失败: {e}")
+        
+        # 缓存远期-现货交易记录数据
+        all_forward_spot_records = []
+        if forward_spot_result and os.path.exists(forward_spot_result[0]):
+            try:
+                wb = openpyxl.load_workbook(forward_spot_result[0], data_only=True)
+                ws = wb.active
+                all_forward_spot_records = list(ws.iter_rows(min_row=4, values_only=True))  # 第4行开始
+            except Exception as e:
+                print(f"读取远期-现货交易记录失败: {e}")
         
         result = []
         total_position = 0
@@ -130,7 +145,14 @@ class StrategyManager:
         total_close_profit = 0
         
         for strategy in strategies:
-            summary = self.calculate_strategy_summary_optimized(strategy, all_trade_records)
+            business_type = strategy.get('business_type', '')
+            
+            # 远期-现货使用专门的记录
+            if business_type == '远期-现货':
+                summary = self._calculate_forward_spot_summary_optimized(strategy, all_forward_spot_records)
+            else:
+                summary = self.calculate_strategy_summary_optimized(strategy, all_trade_records)
+            
             result.append({
                 'id': strategy['id'],
                 'strategy_code': strategy['strategy_code'],
@@ -157,7 +179,7 @@ class StrategyManager:
         }
     
     def calculate_strategy_summary_optimized(self, strategy, all_trade_records):
-        """计算单个策略的汇总数据 - 优化版：使用缓存的交易记录"""
+        """计算单个策略的汇总数据 - 优化版：使用缓存的交易记录（期货类策略）"""
         total_futures_lots = 0
         total_close_lots = 0
         total_close_profit = 0
@@ -167,6 +189,10 @@ class StrategyManager:
         business_type = strategy.get('business_type', '')
         futures_direction = strategy.get('futures_direction', '')
         direction_factor = -1 if futures_direction == '空' else 1
+        
+        # 远期-现货策略应该使用专门的方法
+        if business_type == '远期-现货':
+            return {'position_quantity': 0, 'position_profit': 0, 'close_quantity': 0, 'close_profit': 0}
         
         for row in all_trade_records:
             if not row[1] or str(row[1]) != strategy_type:
@@ -201,14 +227,6 @@ class StrategyManager:
                     'direction_factor': direction_factor,
                     'futures_direction': futures_direction
                 }
-                
-                # 远期-现货需要额外的信息
-                if business_type == '远期-现货':
-                    record['spot_lots'] = spot_lots
-                    record['spot_variety'] = row[4] if row[4] else strategy.get('spot_variety', '')  # 品种1 (D列)
-                    record['forward_variety'] = row[10] if row[10] else strategy.get('forward_variety', '')  # 品种2 (K列)
-                    record['variety2_open_price'] = float(row[13]) if row[13] else 0  # 品种2建仓价 (N列)
-                
                 position_records.append(record)
         
         # 手数转吨位
@@ -226,8 +244,82 @@ class StrategyManager:
             'close_profit': round(total_close_profit, 2)
         }
     
+    def _calculate_forward_spot_summary_optimized(self, strategy, all_forward_spot_records):
+        """计算远期-现货策略汇总 - 优化版：使用缓存的交易记录"""
+        total_open_tons = 0
+        total_close_tons = 0
+        total_close_profit = 0
+        position_records = []
+        
+        strategy_type = strategy.get('strategy_type', '')
+        futures_direction = strategy.get('futures_direction', '')
+        
+        for row in all_forward_spot_records:
+            if not row[0] or str(row[0]) != strategy_type:
+                continue
+            
+            # 匹配交易记录
+            if not self._match_trade_record(row, strategy, '远期-现货'):
+                continue
+            
+            # 读取数据
+            variety1_open_tons = float(row[8]) if row[8] else 0
+            variety1_open_price = float(row[7]) if row[7] else 0
+            variety2_open_price = float(row[13]) if row[13] else 0
+            
+            variety1_close_tons = float(row[23]) if len(row) > 23 and row[23] else 0
+            variety1_close_price = float(row[22]) if len(row) > 22 and row[22] else 0
+            variety2_close_price = float(row[28]) if len(row) > 28 and row[28] else 0
+            
+            total_open_tons += variety1_open_tons
+            total_close_tons += variety1_close_tons
+            
+            # 计算平仓盈亏
+            if variety1_close_tons > 0:
+                open_spread = variety1_open_price - variety2_open_price
+                close_spread = variety1_close_price - variety2_close_price
+                spread_change = close_spread - open_spread
+                
+                if futures_direction == '空':
+                    close_pnl = -spread_change * variety1_close_tons
+                else:
+                    close_pnl = spread_change * variety1_close_tons
+                
+                total_close_profit += close_pnl
+            
+            # 记录持仓明细
+            remaining_tons = variety1_open_tons - variety1_close_tons
+            if remaining_tons > 0:
+                position_records.append({
+                    'variety1_tons': remaining_tons,
+                    'variety1_open_price': variety1_open_price,
+                    'variety2_open_price': variety2_open_price,
+                    'direction': futures_direction
+                })
+        
+        # 计算持仓盈亏
+        position_profit = self._calculate_forward_spot_position_profit(strategy, position_records)
+        
+        return {
+            'position_quantity': round(total_open_tons - total_close_tons, 2),
+            'position_profit': round(position_profit, 2),
+            'close_quantity': round(total_close_tons, 2),
+            'close_profit': round(total_close_profit, 2)
+        }
+    
     def calculate_strategy_summary(self, strategy):
         """计算单个策略的汇总数据"""
+        business_type = strategy.get('business_type', '')
+        
+        # 远期-现货使用专门的计算方法
+        if business_type == '远期-现货':
+            return self._calculate_forward_spot_summary(strategy)
+        
+        # 其他类型使用原有方法
+        return self._calculate_futures_based_summary(strategy)
+    
+    def _calculate_futures_based_summary(self, strategy):
+        """计算基于期货的策略汇总（期货-现货、期货-远期、期货-期货、投机）"""
         # 获取交易记录文件
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -262,7 +354,7 @@ class StrategyManager:
                     close_lots = float(row[14]) if row[14] else 0
                     futures_open_price = float(row[8]) if row[8] else 0
                     futures_close_price = float(row[15]) if row[15] else 0
-                    spot_lots = float(row[23]) if row[23] else 0  # 现货手数（吨数/10）
+                    spot_lots = float(row[23]) if row[23] else 0
                     spot_open_price = float(row[24]) if row[24] else 0
                     
                     total_futures_lots += futures_lots
@@ -283,12 +375,6 @@ class StrategyManager:
                             'direction_factor': direction_factor,
                             'futures_direction': futures_direction
                         }
-                        
-                        # 远期-现货需要额外的信息
-                        if business_type == '远期-现货':
-                            record['spot_lots'] = spot_lots  # 现货吨数/10
-                            record['spot_variety'] = row[22] if row[22] else strategy.get('spot_variety', '')
-                        
                         position_records.append(record)
                         
             except Exception as e:
@@ -308,6 +394,134 @@ class StrategyManager:
             'close_quantity': round(close_tons, 2),
             'close_profit': round(total_close_profit, 2)
         }
+    
+    def _calculate_forward_spot_summary(self, strategy):
+        """计算远期-现货策略汇总（两个现货品种价差交易）"""
+        # 获取远期-现货交易记录文件
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT file_path FROM data_files WHERE file_type = 'forward_spot_record' ORDER BY upload_date DESC LIMIT 1")
+        result = cursor.fetchone()
+        conn.close()
+        
+        total_open_tons = 0  # 总开仓吨数
+        total_close_tons = 0  # 总平仓吨数
+        total_close_profit = 0  # 总平仓盈亏
+        position_records = []  # 持仓明细
+        
+        if result and os.path.exists(result[0]):
+            try:
+                wb = openpyxl.load_workbook(result[0], data_only=True)
+                ws = wb.active
+                
+                strategy_type = strategy.get('strategy_type', '')
+                futures_direction = strategy.get('futures_direction', '')  # 品种1的方向
+                
+                # 遍历数据（从第4行开始，第3行是表头）
+                for row in ws.iter_rows(min_row=4, values_only=True):
+                    if not row[0] or str(row[0]) != strategy_type:  # 第0列是策略类型
+                        continue
+                    
+                    # 匹配交易记录
+                    if not self._match_trade_record(row, strategy, '远期-现货'):
+                        continue
+                    
+                    # 读取数据
+                    # 品种1：建仓
+                    variety1_open_tons = float(row[8]) if row[8] else 0  # 吨数1
+                    variety1_open_price = float(row[7]) if row[7] else 0  # 价格1
+                    
+                    # 品种2：建仓
+                    variety2_open_tons = float(row[14]) if row[14] else 0  # 吨数2
+                    variety2_open_price = float(row[13]) if row[13] else 0  # 价格2
+                    
+                    # 平仓数据（如果有）
+                    variety1_close_tons = float(row[23]) if len(row) > 23 and row[23] else 0
+                    variety1_close_price = float(row[22]) if len(row) > 22 and row[22] else 0
+                    variety2_close_tons = float(row[29]) if len(row) > 29 and row[29] else 0
+                    variety2_close_price = float(row[28]) if len(row) > 28 and row[28] else 0
+                    
+                    total_open_tons += variety1_open_tons
+                    total_close_tons += variety1_close_tons
+                    
+                    # 计算平仓盈亏
+                    if variety1_close_tons > 0:
+                        # 价差变化
+                        open_spread = variety1_open_price - variety2_open_price
+                        close_spread = variety1_close_price - variety2_close_price
+                        spread_change = close_spread - open_spread
+                        
+                        # 品种1方向为"空"：卖出品种1、买入品种2
+                        # 盈利 = 价差缩小（卖出价高，买入价低）
+                        if futures_direction == '空':
+                            close_pnl = -spread_change * variety1_close_tons
+                        else:  # 品种1方向为"多"：买入品种1、卖出品种2
+                            close_pnl = spread_change * variety1_close_tons
+                        
+                        total_close_profit += close_pnl
+                    
+                    # 记录持仓明细
+                    remaining_tons = variety1_open_tons - variety1_close_tons
+                    if remaining_tons > 0:
+                        position_records.append({
+                            'variety1_tons': remaining_tons,
+                            'variety1_open_price': variety1_open_price,
+                            'variety2_open_price': variety2_open_price,
+                            'direction': futures_direction
+                        })
+                        
+            except Exception as e:
+                print(f"读取远期-现货交易记录失败: {e}")
+        
+        # 计算持仓盈亏
+        position_profit = self._calculate_forward_spot_position_profit(strategy, position_records)
+        
+        return {
+            'position_quantity': round(total_open_tons - total_close_tons, 2),
+            'position_profit': round(position_profit, 2),
+            'close_quantity': round(total_close_tons, 2),
+            'close_profit': round(total_close_profit, 2)
+        }
+    
+    def _calculate_forward_spot_position_profit(self, strategy, position_records):
+        """计算远期-现货持仓盈亏"""
+        if not position_records:
+            return 0
+        
+        variety1 = strategy.get('spot_variety', '')
+        variety2 = strategy.get('forward_variety', '')
+        direction = strategy.get('futures_direction', '')
+        
+        # 获取最新价格
+        variety1_info = self._get_latest_spot_price_with_date(variety1)
+        if not variety1_info:
+            return 0
+        
+        current_price1 = variety1_info['price']
+        latest_date = variety1_info['date']
+        
+        current_price2 = self._get_spot_price_by_date(variety2, latest_date)
+        if current_price2 is None:
+            return 0
+        
+        total_pnl = 0
+        for record in position_records:
+            open_price1 = record['variety1_open_price']
+            open_price2 = record['variety2_open_price']
+            tons = record['variety1_tons']
+            
+            open_spread = open_price1 - open_price2
+            current_spread = current_price1 - current_price2
+            spread_change = current_spread - open_spread
+            
+            if direction == '空':  # 卖出品种1、买入品种2
+                pnl = -spread_change * tons
+            else:  # 买入品种1、卖出品种2
+                pnl = spread_change * tons
+            
+            total_pnl += pnl
+        
+        return total_pnl
     
     def _calculate_position_profit(self, strategy, position_records):
         """计算持仓盈亏"""
