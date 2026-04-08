@@ -1999,34 +1999,10 @@
                             </div>
                             <div id="detail-review-${s.id}" class="detail-panel">
                                 <div class="weekly-review-container" id="weekly-review-${s.id}">
-                                    <table class="table table-sm">
-                                        <thead>
-                                            <tr>
-                                                <th>周次</th>
-                                                <th>建仓(手)</th>
-                                                <th>平仓(手)</th>
-                                                <th>平仓盈利基差/价差</th>
-                                                <th>平仓盈亏(元)</th>
-                                                <th>持仓(手)</th>
-                                                <th>期末基差/价差</th>
-                                                <th>持仓盈亏(元)</th>
-                                            </tr>
-                                        </thead>
+                                    <table class="table table-sm" id="weekly-review-table-${s.id}">
                                         <tbody id="weekly-review-body-${s.id}">
-                                            <tr><td colspan="8" class="text-center text-muted">加载中...</td></tr>
+                                            <tr><td colspan="2" class="text-center text-muted">加载中...</td></tr>
                                         </tbody>
-                                        <tfoot id="weekly-review-foot-${s.id}" style="display:none;">
-                                            <tr style="font-weight: bold; background: #f5f5f5;">
-                                                <td>合计</td>
-                                                <td id="total-open-${s.id}">-</td>
-                                                <td id="total-close-${s.id}">-</td>
-                                                <td>-</td>
-                                                <td id="total-close-pnl-${s.id}">-</td>
-                                                <td id="total-position-${s.id}">-</td>
-                                                <td>-</td>
-                                                <td id="total-position-pnl-${s.id}">-</td>
-                                            </tr>
-                                        </tfoot>
                                     </table>
                                 </div>
                             </div>
@@ -2099,52 +2075,73 @@
         // 加载按周复盘数据
         async function loadWeeklyReview(strategyId) {
             const tbody = document.getElementById(`weekly-review-body-${strategyId}`);
-            const tfoot = document.getElementById(`weekly-review-foot-${strategyId}`);
             
             try {
                 const response = await fetch(`/api/strategy/${strategyId}/weekly`);
                 const result = await response.json();
                 
                 if (result.success && result.data && result.data.length > 0) {
+                    const weeks = result.data;
                     let totalOpen = 0, totalClose = 0, totalClosePnl = 0, totalPositionPnl = 0;
-                    let latestPosition = 0;
                     
-                    tbody.innerHTML = result.data.map((week, idx) => {
-                        totalOpen += week.open_lots || 0;
-                        totalClose += week.close_lots || 0;
-                        totalClosePnl += week.close_pnl || 0;
-                        totalPositionPnl += week.position_pnl || 0;
-                        if (idx === result.data.length - 1) {
-                            latestPosition = week.cumulative_position || 0;
-                        }
-                        
-                        return `
-                            <tr>
-                                <td>${week.week}</td>
-                                <td>${week.open_lots || 0}</td>
-                                <td>${week.close_lots || 0}</td>
-                                <td>${week.close_basis || '-'}</td>
-                                <td class="${(week.close_pnl || 0) > 0 ? 'text-success' : (week.close_pnl || 0) < 0 ? 'text-danger' : ''}">${week.close_pnl ? week.close_pnl.toLocaleString() : 0}</td>
-                                <td>${week.cumulative_position || 0}</td>
-                                <td>${week.end_basis || '-'}</td>
-                                <td class="${(week.position_pnl || 0) > 0 ? 'text-success' : (week.position_pnl || 0) < 0 ? 'text-danger' : ''}">${week.position_pnl ? week.position_pnl.toLocaleString() : 0}</td>
-                            </tr>
-                        `;
-                    }).join('');
+                    weeks.forEach(w => {
+                        totalOpen += w.open_lots || 0;
+                        totalClose += w.close_lots || 0;
+                        totalClosePnl += w.close_pnl || 0;
+                        totalPositionPnl += w.position_pnl || 0;
+                    });
                     
-                    // 显示合计行
-                    tfoot.style.display = 'table-footer-group';
-                    document.getElementById(`total-open-${strategyId}`).textContent = totalOpen;
-                    document.getElementById(`total-close-${strategyId}`).textContent = totalClose;
-                    document.getElementById(`total-close-pnl-${strategyId}`).textContent = totalClosePnl.toLocaleString();
-                    document.getElementById(`total-position-${strategyId}`).textContent = latestPosition; // 只显示最新一周的持仓
-                    document.getElementById(`total-position-pnl-${strategyId}`).textContent = totalPositionPnl.toLocaleString();
+                    // 横向表格布局：指标作为行，周次作为列
+                    const weekHeaders = weeks.map(w => `<th style="min-width: 80px; text-align: center;">${w.week.replace('年第', '<br>第')}</th>`).join('');
+                    
+                    tbody.innerHTML = `
+                        <tr style="background: #f8f9fa;">
+                            <th style="width: 140px; vertical-align: middle;">指标</th>
+                            ${weekHeaders}
+                            <th style="text-align: center; background: #e9ecef;">合计</th>
+                        </tr>
+                        <tr>
+                            <td><strong>建仓(手)</strong></td>
+                            ${weeks.map(w => `<td style="text-align: center;">${w.open_lots || 0}</td>`).join('')}
+                            <td style="text-align: center; font-weight: bold; background: #f8f9fa;">${totalOpen}</td>
+                        </tr>
+                        <tr>
+                            <td><strong>平仓(手)</strong></td>
+                            ${weeks.map(w => `<td style="text-align: center;">${w.close_lots || 0}</td>`).join('')}
+                            <td style="text-align: center; font-weight: bold; background: #f8f9fa;">${totalClose}</td>
+                        </tr>
+                        <tr>
+                            <td><strong>平仓盈利基差/价差</strong></td>
+                            ${weeks.map(w => `<td style="text-align: center;">${w.close_basis ? w.close_basis.toFixed(2) : '-'}</td>`).join('')}
+                            <td style="text-align: center; background: #f8f9fa;">-</td>
+                        </tr>
+                        <tr>
+                            <td><strong>平仓盈亏(元)</strong></td>
+                            ${weeks.map(w => `<td style="text-align: center;" class="${(w.close_pnl || 0) > 0 ? 'text-success' : (w.close_pnl || 0) < 0 ? 'text-danger' : ''}">${w.close_pnl ? w.close_pnl.toLocaleString() : 0}</td>`).join('')}
+                            <td style="text-align: center; font-weight: bold; background: #f8f9fa;" class="${totalClosePnl > 0 ? 'text-success' : totalClosePnl < 0 ? 'text-danger' : ''}">${totalClosePnl.toLocaleString()}</td>
+                        </tr>
+                        <tr>
+                            <td><strong>持仓(手)</strong></td>
+                            ${weeks.map(w => `<td style="text-align: center;">${w.cumulative_position || 0}</td>`).join('')}
+                            <td style="text-align: center; font-weight: bold; background: #f8f9fa;">${weeks[weeks.length - 1]?.cumulative_position || 0}</td>
+                        </tr>
+                        <tr>
+                            <td><strong>期末基差/价差</strong></td>
+                            ${weeks.map(w => `<td style="text-align: center;">${w.end_basis ? w.end_basis.toFixed(2) : '-'}</td>`).join('')}
+                            <td style="text-align: center; background: #f8f9fa;">-</td>
+                        </tr>
+                        <tr>
+                            <td><strong>持仓盈亏(元)</strong></td>
+                            ${weeks.map(w => `<td style="text-align: center;" class="${(w.position_pnl || 0) > 0 ? 'text-success' : (w.position_pnl || 0) < 0 ? 'text-danger' : ''}">${w.position_pnl ? w.position_pnl.toLocaleString() : 0}</td>`).join('')}
+                            <td style="text-align: center; font-weight: bold; background: #f8f9fa;" class="${totalPositionPnl > 0 ? 'text-success' : totalPositionPnl < 0 ? 'text-danger' : ''}">${totalPositionPnl.toLocaleString()}</td>
+                        </tr>
+                    `;
                 } else {
-                    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">暂无交易数据</td></tr>';
-                    tfoot.style.display = 'none';
+                    tbody.innerHTML = '<tr><td class="text-center text-muted">暂无交易数据</td></tr>';
                 }
             } catch (e) {
-                tbody.innerHTML = '<tr><td colspan="8" class="text-center text-danger">加载失败</td></tr>';
+                console.error('加载复盘数据失败:', e);
+                tbody.innerHTML = '<tr><td class="text-center text-danger">加载失败</td></tr>';
             }
         }
         
@@ -2750,8 +2747,9 @@
                 
                 if (result.success) {
                     currentPdfUrl = result.download_url;
-                    // 使用完整的URL
-                    const fullUrl = window.location.origin + currentPdfUrl;
+                    // 使用preview路由来预览（不是download路由）
+                    const previewUrl = currentPdfUrl.replace('/download/', '/preview/');
+                    const fullUrl = window.location.origin + previewUrl;
                     document.getElementById('pdfPreviewFrame').src = fullUrl;
                     
                     const modal = new bootstrap.Modal(document.getElementById('previewModal'));
@@ -2791,7 +2789,12 @@
                 if (result.success) {
                     currentPdfUrl = result.download_url;
                     showToast('PDF汇报生成成功！', 'success');
-                    window.open(result.download_url, '_blank');
+                    // 先打开预览窗口，让用户选择下载
+                    const previewUrl = currentPdfUrl.replace('/download/', '/preview/');
+                    const fullUrl = window.location.origin + previewUrl;
+                    document.getElementById('pdfPreviewFrame').src = fullUrl;
+                    const modal = new bootstrap.Modal(document.getElementById('previewModal'));
+                    modal.show();
                 } else {
                     showToast('生成失败：' + (result.error || '未知错误'), 'error');
                 }

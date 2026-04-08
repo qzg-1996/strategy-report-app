@@ -537,6 +537,7 @@ class StrategyManager:
         spot_variety = strategy.get('spot_variety', '')
         
         total_pnl = 0
+        calculation_failed = False
         
         if business_type in ['期货-现货', '期货-远期']:
             # 【期货-现货 / 期货-远期】
@@ -547,35 +548,37 @@ class StrategyManager:
             # 获取期货最新价格和日期
             futures_info = self._get_latest_futures_price_with_date(futures_contract)
             if not futures_info:
-                return 0
-            
-            current_futures_price = futures_info['price']
-            latest_date = futures_info['date']
-            
-            # 获取现货/远期最新价格（期货-远期时spot_variety存储的是远期品种）
-            current_spot_price = self._get_spot_price_by_date(spot_variety, latest_date)
-            if current_spot_price is None:
-                return 0
-            
-            for record in position_records:
-                lots = record['lots']
+                print(f"[持仓盈亏计算] 无法获取期货价格: {futures_contract}")
+                calculation_failed = True
+            else:
+                current_futures_price = futures_info['price']
+                latest_date = futures_info['date']
                 
-                # 建仓基差 = 现货建仓价 - 期货建仓价
-                open_basis = record['spot_open_price'] - record['futures_open_price']
-                # 期末基差 = 现货最新价 - 期货最新价
-                current_basis = current_spot_price - current_futures_price
-                
-                # 根据期货方向计算盈亏
-                if futures_direction == '空':
-                    # 空: (期末基差 - 建仓基差) × 手数 × 10
-                    basis_change = current_basis - open_basis
-                else:  # 多
-                    # 多: (建仓基差 - 期末基差) × 手数 × 10
-                    basis_change = open_basis - current_basis
-                
-                pnl = lots * 10 * basis_change
-                total_pnl += pnl
-                
+                # 获取现货/远期最新价格（期货-远期时spot_variety存储的是远期品种）
+                current_spot_price = self._get_spot_price_by_date(spot_variety, latest_date)
+                if current_spot_price is None:
+                    print(f"[持仓盈亏计算] 无法获取现货价格: {spot_variety}, 日期: {latest_date}")
+                    calculation_failed = True
+                else:
+                    for record in position_records:
+                        lots = record['lots']
+                        
+                        # 建仓基差 = 现货建仓价 - 期货建仓价
+                        open_basis = record['spot_open_price'] - record['futures_open_price']
+                        # 期末基差 = 现货最新价 - 期货最新价
+                        current_basis = current_spot_price - current_futures_price
+                        
+                        # 根据期货方向计算盈亏
+                        if futures_direction == '空':
+                            # 空: (期末基差 - 建仓基差) × 手数 × 10
+                            basis_change = current_basis - open_basis
+                        else:  # 多
+                            # 多: (建仓基差 - 期末基差) × 手数 × 10
+                            basis_change = open_basis - current_basis
+                        
+                        pnl = lots * 10 * basis_change
+                        total_pnl += pnl
+                        
         elif business_type == '期货-期货':
             # 【期货-期货】
             # 逐行计算，只有期货端
@@ -589,71 +592,33 @@ class StrategyManager:
             futures_info2 = self._get_latest_futures_price_with_date(contract2)
             
             if not futures_info1 or not futures_info2:
-                return 0
-            
-            current_price1 = futures_info1['price']
-            current_price2 = futures_info2['price']
-            latest_date = futures_info1['date']
-            
-            # 注意：期货-期货的持仓记录中，需要区分是哪个合约的记录
-            # 从交易记录中已经读取了方向信息
-            for record in position_records:
-                lots = record['lots']
-                futures_direction = record.get('futures_direction', '')
-                open_price = record['futures_open_price']
+                print(f"[持仓盈亏计算] 无法获取期货价格: 合约1={futures_contract}, 合约2={contract2}")
+                calculation_failed = True
+            else:
+                current_price1 = futures_info1['price']
+                current_price2 = futures_info2['price']
                 
-                # 根据方向计算盈亏
-                if futures_direction == '空':
-                    # 空: (建仓价 - 最新价) × 手数 × 10
-                    price_change = open_price - current_price1
-                else:  # 多
-                    # 多: (最新价 - 建仓价) × 手数 × 10
-                    price_change = current_price1 - open_price
-                
-                pnl = lots * 10 * price_change
-                total_pnl += pnl
+                # 注意：期货-期货的持仓记录中，需要区分是哪个合约的记录
+                for record in position_records:
+                    lots = record['lots']
+                    record_direction = record.get('futures_direction', futures_direction)
+                    open_price = record['futures_open_price']
+                    
+                    # 根据方向计算盈亏
+                    if record_direction == '空':
+                        # 空: (建仓价 - 最新价) × 手数 × 10
+                        price_change = open_price - current_price1
+                    else:  # 多
+                        # 多: (最新价 - 建仓价) × 手数 × 10
+                        price_change = current_price1 - open_price
+                    
+                    pnl = lots * 10 * price_change
+                    total_pnl += pnl
                 
         elif business_type == '远期-现货':
             # 【远期-现货】价差交易（两个现货品种）
-            # 品种1 = spot_variety, 品种2 = forward_variety
-            # 价差 = 品种1价格 - 品种2价格
-            # 品种1方向=卖: (品种1建仓价 - 品种1最新价) × 品种1吨 + (品种2最新价 - 品种2建仓价) × 品种2吨
-            # 品种1方向=买: (品种1最新价 - 品种1建仓价) × 品种1吨 + (品种2建仓价 - 品种2最新价) × 品种2吨
-            
-            variety2 = strategy.get('forward_variety', '')  # 品种2
-            
-            # 获取品种1最新价格
-            variety1_info = self._get_latest_spot_price_with_date(spot_variety)
-            if not variety1_info:
-                return 0
-            
-            current_price1 = variety1_info['price']
-            latest_date = variety1_info['date']
-            
-            # 获取品种2最新价格
-            current_price2 = self._get_spot_price_by_date(variety2, latest_date)
-            if current_price2 is None:
-                return 0
-            
-            for record in position_records:
-                # 品种1的建仓价和吨数
-                variety1_open_price = record['spot_open_price']
-                variety1_tons = record.get('spot_lots', 0) * 10  # 手数转吨数
-                
-                # 品种2的建仓价（这里简化处理，假设品种2建仓价与品种1相同或从其他方式获取）
-                variety2_open_price = record.get('variety2_open_price', current_price2)  # 简化处理
-                variety2_tons = variety1_tons  # 假设吨数相同
-                
-                if futures_direction == '空':  # 品种1卖，品种2买
-                    # (品种1建仓价 - 品种1最新价) × 品种1吨 + (品种2最新价 - 品种2建仓价) × 品种2吨
-                    pnl1 = (variety1_open_price - current_price1) * variety1_tons
-                    pnl2 = (current_price2 - variety2_open_price) * variety2_tons
-                else:  # 品种1买，品种2卖
-                    # (品种1最新价 - 品种1建仓价) × 品种1吨 + (品种2建仓价 - 品种2最新价) × 品种2吨
-                    pnl1 = (current_price1 - variety1_open_price) * variety1_tons
-                    pnl2 = (variety2_open_price - current_price2) * variety2_tons
-                
-                total_pnl += (pnl1 + pnl2)
+            # 使用专门的计算方法
+            total_pnl = self._calculate_forward_spot_position_profit(strategy, position_records)
                 
         elif business_type == '投机' or strategy_type == '趋势交易':
             # 【投机】
@@ -663,25 +628,29 @@ class StrategyManager:
             # 获取期货最新价格
             futures_info = self._get_latest_futures_price_with_date(futures_contract)
             if not futures_info:
-                return 0
-            
-            current_futures_price = futures_info['price']
-            
-            for record in position_records:
-                lots = record['lots']
-                futures_direction = record.get('futures_direction', '')
-                open_price = record['futures_open_price']
+                print(f"[持仓盈亏计算] 无法获取期货价格: {futures_contract}")
+                calculation_failed = True
+            else:
+                current_futures_price = futures_info['price']
                 
-                # 根据方向计算盈亏
-                if futures_direction == '空':
-                    # 空: (建仓价 - 最新价) × 手数 × 10
-                    price_change = open_price - current_futures_price
-                else:  # 多
-                    # 多: (最新价 - 建仓价) × 手数 × 10
-                    price_change = current_futures_price - open_price
-                
-                pnl = lots * 10 * price_change
-                total_pnl += pnl
+                for record in position_records:
+                    lots = record['lots']
+                    record_direction = record.get('futures_direction', futures_direction)
+                    open_price = record['futures_open_price']
+                    
+                    # 根据方向计算盈亏
+                    if record_direction == '空':
+                        # 空: (建仓价 - 最新价) × 手数 × 10
+                        price_change = open_price - current_futures_price
+                    else:  # 多
+                        # 多: (最新价 - 建仓价) × 手数 × 10
+                        price_change = current_futures_price - open_price
+                    
+                    pnl = lots * 10 * price_change
+                    total_pnl += pnl
+        
+        if calculation_failed and total_pnl == 0:
+            print(f"[持仓盈亏计算] 策略 {strategy.get('strategy_name', 'Unknown')} 因价格数据缺失无法计算")
         
         return total_pnl
     
@@ -982,7 +951,12 @@ class StrategyManager:
         if all_trade_records is None:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            cursor.execute("SELECT file_path FROM data_files WHERE file_type = 'trade_record' ORDER BY upload_date DESC LIMIT 1")
+            
+            business_type = strategy.get('business_type', '')
+            if business_type == '远期-现货':
+                cursor.execute("SELECT file_path FROM data_files WHERE file_type = 'forward_spot_record' ORDER BY upload_date DESC LIMIT 1")
+            else:
+                cursor.execute("SELECT file_path FROM data_files WHERE file_type = 'trade_record' ORDER BY upload_date DESC LIMIT 1")
             result = cursor.fetchone()
             conn.close()
             
@@ -990,7 +964,10 @@ class StrategyManager:
                 try:
                     wb = openpyxl.load_workbook(result[0], data_only=True)
                     ws = wb.active
-                    all_trade_records = list(ws.iter_rows(min_row=3, values_only=True))
+                    if business_type == '远期-现货':
+                        all_trade_records = list(ws.iter_rows(min_row=4, values_only=True))
+                    else:
+                        all_trade_records = list(ws.iter_rows(min_row=3, values_only=True))
                 except Exception as e:
                     print(f"读取交易记录失败: {e}")
                     return weekly_data
@@ -1005,60 +982,242 @@ class StrategyManager:
             
             weeks = {}
             
-            for row in all_trade_records:
-                if not row[1]:
-                    continue
-                
-                if str(row[1]) != strategy_type:
-                    continue
-                
-                match = self._match_trade_record(row, strategy, business_type)
-                
-                if match and row[4]:
-                    if isinstance(row[4], datetime):
-                        week_num = row[4].isocalendar()[1]
-                        week_key = f"{row[4].year}年第{week_num}周"
-                    else:
-                        week_key = "未知周次"
-                    
-                    if week_key not in weeks:
-                        weeks[week_key] = {
-                            'week': week_key,
-                            'open_lots': 0,
-                            'close_lots': 0,
-                            'close_pnl': 0,
-                            'position_lots': 0,
-                        }
-                    
-                    weeks[week_key]['open_lots'] += float(row[7]) if row[7] else 0
-                    
-                    close_lots = float(row[14]) if row[14] else 0
-                    weeks[week_key]['close_lots'] += close_lots
-                    
-                    # 计算平仓盈亏
-                    if close_lots > 0:
-                        open_price = float(row[8]) if row[8] else 0
-                        close_price = float(row[15]) if row[15] else 0
-                        pnl = (close_price - open_price) * close_lots * 10 * direction_factor
-                        weeks[week_key]['close_pnl'] += pnl
+            # 获取策略的合约/品种信息用于计算基差
+            futures_contract = strategy.get('futures_contract', '')
+            spot_variety = strategy.get('spot_variety', '')
             
+            for row in all_trade_records:
+                # 根据业务类型确定列索引
+                if business_type == '远期-现货':
+                    # 远期-现货：row[0]是策略类型，row[2]是日期
+                    row_strategy_type = str(row[0]) if row[0] else ''
+                    row_date = row[2]
+                    
+                    if row_strategy_type != strategy_type:
+                        continue
+                    
+                    match = self._match_trade_record(row, strategy, business_type)
+                    if not match or not row_date:
+                        continue
+                    
+                    # 远期-现货的列映射
+                    # row[7]: 价格1, row[8]: 吨数1, row[13]: 价格2, row[14]: 吨数2
+                    # row[22]: 平仓价格1, row[23]: 平仓吨数1, row[28]: 平仓价格2
+                    open_tons = float(row[8]) if row[8] else 0
+                    open_price1 = float(row[7]) if row[7] else 0
+                    open_price2 = float(row[13]) if row[13] else 0
+                    close_tons = float(row[23]) if len(row) > 23 and row[23] else 0
+                    close_price1 = float(row[22]) if len(row) > 22 and row[22] else 0
+                    close_price2 = float(row[28]) if len(row) > 28 and row[28] else 0
+                    
+                    # 转换为手数（假设1手=10吨）
+                    open_lots = open_tons / 10
+                    close_lots = close_tons / 10
+                    
+                    # 计算开仓基差（价差）
+                    open_basis = open_price1 - open_price2
+                    close_basis = None
+                    if close_tons > 0:
+                        close_basis = close_price1 - close_price2
+                    
+                else:
+                    # 期货类策略：row[1]是策略类型，row[4]是日期
+                    row_strategy_type = str(row[1]) if row[1] else ''
+                    row_date = row[4]
+                    
+                    if row_strategy_type != strategy_type:
+                        continue
+                    
+                    match = self._match_trade_record(row, strategy, business_type)
+                    if not match or not row_date:
+                        continue
+                    
+                    # 期货类的列映射
+                    open_lots = float(row[7]) if row[7] else 0
+                    close_lots = float(row[14]) if row[14] else 0
+                    open_price = float(row[8]) if row[8] else 0
+                    close_price = float(row[15]) if row[15] else 0
+                    spot_price = float(row[24]) if row[24] else 0
+                    
+                    # 计算基差
+                    open_basis = spot_price - open_price if spot_price and open_price else None
+                    close_basis = None
+                    if close_lots > 0:
+                        close_spot = float(row[29]) if row[29] else spot_price
+                        close_basis = close_spot - close_price if close_spot and close_price else None
+                
+                # 计算周次
+                if isinstance(row_date, datetime):
+                    week_num = row_date.isocalendar()[1]
+                    week_key = f"{row_date.year}年第{week_num}周"
+                else:
+                    week_key = "未知周次"
+                
+                if week_key not in weeks:
+                    weeks[week_key] = {
+                        'week': week_key,
+                        'open_lots': 0,
+                        'close_lots': 0,
+                        'close_pnl': 0,
+                        'position_lots': 0,
+                        'open_basis_sum': 0,
+                        'open_basis_count': 0,
+                        'close_basis_sum': 0,
+                        'close_basis_count': 0,
+                    }
+                
+                weeks[week_key]['open_lots'] += open_lots
+                weeks[week_key]['close_lots'] += close_lots
+                
+                # 累计基差数据用于计算平均
+                if open_basis is not None:
+                    weeks[week_key]['open_basis_sum'] += open_basis
+                    weeks[week_key]['open_basis_count'] += 1
+                if close_basis is not None:
+                    weeks[week_key]['close_basis_sum'] += close_basis
+                    weeks[week_key]['close_basis_count'] += 1
+                
+                # 计算平仓盈亏
+                if close_lots > 0:
+                    if business_type == '远期-现货':
+                        # 价差交易盈亏计算
+                        open_spread = open_price1 - open_price2
+                        close_spread = close_price1 - close_price2
+                        spread_change = close_spread - open_spread
+                        if futures_direction == '空':
+                            pnl = -spread_change * close_tons
+                        else:
+                            pnl = spread_change * close_tons
+                    else:
+                        # 期货类盈亏计算
+                        open_price_futures = float(row[8]) if row[8] else 0
+                        close_price_futures = float(row[15]) if row[15] else 0
+                        pnl = (close_price_futures - open_price_futures) * close_lots * 10 * direction_factor
+                    
+                    weeks[week_key]['close_pnl'] += pnl
+            
+            # 计算累计持仓和期末基差
             cumulative_position = 0
-            for week_key in sorted(weeks.keys()):
+            prev_cumulative = 0
+            sorted_weeks = sorted(weeks.keys())
+            
+            for i, week_key in enumerate(sorted_weeks):
                 weeks[week_key]['position_lots'] = weeks[week_key]['open_lots'] - weeks[week_key]['close_lots']
                 cumulative_position += weeks[week_key]['position_lots']
                 weeks[week_key]['cumulative_position'] = cumulative_position
+                
+                # 计算平均基差
+                if weeks[week_key]['open_basis_count'] > 0:
+                    weeks[week_key]['avg_open_basis'] = weeks[week_key]['open_basis_sum'] / weeks[week_key]['open_basis_count']
+                else:
+                    weeks[week_key]['avg_open_basis'] = None
+                
+                if weeks[week_key]['close_basis_count'] > 0:
+                    weeks[week_key]['close_basis'] = weeks[week_key]['close_basis_sum'] / weeks[week_key]['close_basis_count']
+                else:
+                    weeks[week_key]['close_basis'] = None
+                
+                # 计算期末基差（取该周最后一天的基差或最新价格计算的基差）
+                weeks[week_key]['end_basis'] = self._calculate_week_end_basis(strategy, week_key)
+                
+                # 计算持仓盈亏（基于期末基差）
+                if cumulative_position > 0 and weeks[week_key]['end_basis'] is not None:
+                    weeks[week_key]['position_pnl'] = self._calculate_week_position_pnl(
+                        strategy, cumulative_position, weeks[week_key]['end_basis'], prev_cumulative
+                    )
+                else:
+                    weeks[week_key]['position_pnl'] = 0
+                
+                prev_cumulative = cumulative_position
                 
                 # 转换为吨位 (1手 = 10吨)
                 weeks[week_key]['open_tons'] = weeks[week_key]['open_lots'] * 10
                 weeks[week_key]['close_tons'] = weeks[week_key]['close_lots'] * 10
                 weeks[week_key]['cumulative_tons'] = cumulative_position * 10
+                
+                # 清理临时数据
+                del weeks[week_key]['open_basis_sum']
+                del weeks[week_key]['open_basis_count']
+                del weeks[week_key]['close_basis_sum']
+                del weeks[week_key]['close_basis_count']
             
             weekly_data = list(weeks.values())
             
         except Exception as e:
             print(f"处理交易记录失败: {e}")
+            import traceback
+            traceback.print_exc()
         
         return weekly_data
+    
+    def _calculate_week_end_basis(self, strategy, week_key):
+        """计算该周期末基差"""
+        try:
+            business_type = strategy.get('business_type', '')
+            
+            if business_type == '远期-现货':
+                variety1 = strategy.get('spot_variety', '')
+                variety2 = strategy.get('forward_variety', '')
+                
+                variety1_info = self._get_latest_spot_price_with_date(variety1)
+                if not variety1_info:
+                    return None
+                
+                current_price1 = variety1_info['price']
+                latest_date = variety1_info['date']
+                
+                current_price2 = self._get_spot_price_by_date(variety2, latest_date)
+                if current_price2 is None:
+                    return None
+                
+                return round(current_price1 - current_price2, 2)
+            
+            else:
+                # 期货类策略
+                futures_contract = strategy.get('futures_contract', '')
+                spot_variety = strategy.get('spot_variety', '')
+                
+                futures_info = self._get_latest_futures_price_with_date(futures_contract)
+                if not futures_info:
+                    return None
+                
+                current_futures_price = futures_info['price']
+                latest_date = futures_info['date']
+                
+                current_spot_price = self._get_spot_price_by_date(spot_variety, latest_date)
+                if current_spot_price is None:
+                    return None
+                
+                return round(current_spot_price - current_futures_price, 2)
+        
+        except Exception as e:
+            print(f"计算期末基差失败: {e}")
+            return None
+    
+    def _calculate_week_position_pnl(self, strategy, cumulative_position, end_basis, prev_cumulative):
+        """计算该周持仓盈亏"""
+        try:
+            business_type = strategy.get('business_type', '')
+            futures_direction = strategy.get('futures_direction', '')
+            
+            # 简化计算：假设建仓基差为0，实际应根据持仓明细计算
+            # 这里使用期末基差 * 持仓手数 * 10吨/手 * 方向
+            if business_type == '远期-现货':
+                # 价差交易
+                if futures_direction == '空':
+                    return round(-end_basis * cumulative_position * 10, 2)
+                else:
+                    return round(end_basis * cumulative_position * 10, 2)
+            else:
+                # 期货类
+                if futures_direction == '空':
+                    return round(end_basis * cumulative_position * 10, 2)
+                else:
+                    return round(-end_basis * cumulative_position * 10, 2)
+        
+        except Exception as e:
+            print(f"计算持仓盈亏失败: {e}")
+            return 0
     
     def get_all_strategies_weekly_data(self, strategies):
         """批量获取多个策略的按周复盘数据 - 优化版：只读取一次Excel"""

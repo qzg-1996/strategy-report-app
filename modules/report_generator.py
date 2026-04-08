@@ -32,18 +32,34 @@ class ReportGenerator:
         self.styles = self.create_styles()
     
     def setup_fonts(self):
-        """设置中文字体 - 强制使用系统中文字体"""
+        """设置中文字体 - 支持Windows和Linux"""
         # 默认使用英文字体
         self.font_name = 'Helvetica'
         self.font_name_bold = 'Helvetica-Bold'
         
-        font_paths = [
+        # Windows字体路径
+        windows_fonts = [
             ('C:/Windows/Fonts/simhei.ttf', 'SimHei'),
             ('C:/Windows/Fonts/simkai.ttf', 'SimKai'),
             ('C:/Windows/Fonts/simsun.ttc', 'SimSun'),
             ('C:/Windows/Fonts/msyh.ttc', 'MicrosoftYaHei'),
             ('C:/Windows/Fonts/msyhbd.ttc', 'MicrosoftYaHei-Bold'),
         ]
+        
+        # Linux字体路径（PythonAnywhere等云端环境）
+        linux_fonts = [
+            ('/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc', 'WenQuanYiZenHei'),
+            ('/usr/share/fonts/truetype/wqy/wqy-microhei.ttc', 'WenQuanYiMicroHei'),
+            ('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 'DejaVuSans'),
+            ('/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf', 'LiberationSans'),
+        ]
+        
+        # 检查系统类型并选择合适的字体列表
+        import platform
+        if platform.system() == 'Windows':
+            font_paths = windows_fonts
+        else:
+            font_paths = linux_fonts
         
         registered = []
         for font_path, font_name in font_paths:
@@ -57,23 +73,51 @@ class ReportGenerator:
                 except Exception as e:
                     print(f"注册字体 {font_name} 失败: {e}")
         
-        # 优先级：黑体 > 楷体 > 宋体 > 微软雅黑
-        if 'SimHei' in registered:
-            self.font_name = 'SimHei'
-            self.font_name_bold = 'SimHei'
-            print("使用字体: SimHei")
-        elif 'SimKai' in registered:
-            self.font_name = 'SimKai'
-            self.font_name_bold = 'SimKai'
-            print("使用字体: SimKai")
-        elif 'SimSun' in registered:
-            self.font_name = 'SimSun'
-            self.font_name_bold = 'SimSun'
-            print("使用字体: SimSun")
-        elif 'MicrosoftYaHei' in registered:
-            self.font_name = 'MicrosoftYaHei'
-            self.font_name_bold = 'MicrosoftYaHei-Bold' if 'MicrosoftYaHei-Bold' in registered else 'MicrosoftYaHei'
-            print("使用字体: MicrosoftYaHei")
+        # 优先级设置
+        priority = ['SimHei', 'SimKai', 'SimSun', 'MicrosoftYaHei', 
+                   'WenQuanYiZenHei', 'WenQuanYiMicroHei', 'DejaVuSans', 'LiberationSans']
+        
+        for font in priority:
+            if font in registered:
+                self.font_name = font
+                self.font_name_bold = font
+                print(f"使用字体: {font}")
+                break
+        
+        # 如果还是没有中文字体，尝试使用项目目录下的备用字体
+        if self.font_name == 'Helvetica':
+            self._try_use_local_font()
+    
+    def _try_use_local_font(self):
+        """尝试使用项目目录下的备用字体"""
+        # 获取项目根目录
+        current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        font_dir = os.path.join(current_dir, 'static', 'fonts')
+        
+        # 如果字体目录不存在，尝试创建并下载字体
+        if not os.path.exists(font_dir):
+            os.makedirs(font_dir, exist_ok=True)
+        
+        # 检查是否已有字体文件
+        local_fonts = [
+            (os.path.join(font_dir, 'simhei.ttf'), 'LocalSimHei'),
+            (os.path.join(font_dir, 'wqy-zenhei.ttc'), 'LocalWQY'),
+        ]
+        
+        for font_path, font_name in local_fonts:
+            if os.path.exists(font_path):
+                try:
+                    if font_name not in pdfmetrics.getRegisteredFontNames():
+                        pdfmetrics.registerFont(TTFont(font_name, font_path))
+                    self.font_name = font_name
+                    self.font_name_bold = font_name
+                    print(f"使用本地字体: {font_name}")
+                    return
+                except Exception as e:
+                    print(f"使用本地字体失败: {e}")
+        
+        # 如果本地没有字体，尝试从网络下载（仅作为最后的备选）
+        print("警告：未找到中文字体，PDF可能显示为方框。建议上传字体文件到 static/fonts 目录。")
     
     def create_styles(self):
         """创建样式"""

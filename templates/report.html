@@ -167,19 +167,33 @@
             <div class="modal-body text-center py-4">
                 <i class="bi bi-file-earmark-pdf text-danger" style="font-size: 4rem;"></i>
                 <h5 class="mt-3">PDF汇报已生成</h5>
-                <p class="text-muted mb-0">点击下方按钮下载文件</p>
+                <p class="text-muted mb-0">点击下方按钮预览或下载文件</p>
             </div>
             <div class="modal-footer justify-content-center">
-                <a id="previewLink" href="#" target="_blank" class="btn btn-outline-primary btn-lg me-2">
+                <button onclick="openPdfPreview()" class="btn btn-outline-primary btn-lg me-2">
                     <i class="bi bi-eye me-2"></i>预览PDF
-                </a>
-                <a id="downloadLink" href="#" class="btn btn-primary btn-lg">
+                </button>
+                <a id="downloadLink" href="#" class="btn btn-primary btn-lg" download>
                     <i class="bi bi-download me-2"></i>下载PDF
                 </a>
             </div>
         </div>
     </div>
 </div>
+
+<!-- PDF预览模态框 -->
+<div class="modal fade" id="pdfPreviewModal" tabindex="-1" style="z-index: 1060;">
+    <div class="modal-dialog modal-xl" style="max-width: 90%; height: 90vh;">
+        <div class="modal-content" style="height: 100%;">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-file-earmark-pdf text-danger me-2"></i>PDF预览</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-0" style="height: calc(100% - 60px);">
+                <iframe id="pdfPreviewFrame" src="" style="width: 100%; height: 100%; border: none;"></iframe>
+            </div>
+        </div>
+    </n</div>
 {% endblock %}
 
 {% block extra_js %}
@@ -191,6 +205,7 @@ let downloadModal = null;
 document.addEventListener('DOMContentLoaded', function() {
     generateModal = new bootstrap.Modal(document.getElementById('generateModal'));
     downloadModal = new bootstrap.Modal(document.getElementById('downloadModal'));
+    pdfPreviewModal = new bootstrap.Modal(document.getElementById('pdfPreviewModal'));
     
     // 设置默认报告周期为本周
     const now = new Date();
@@ -200,6 +215,17 @@ document.addEventListener('DOMContentLoaded', function() {
     
     loadStrategies();
 });
+
+let currentPdfUrl = '';
+
+function openPdfPreview() {
+    if (currentPdfUrl) {
+        const previewUrl = currentPdfUrl.replace('/download/', '/preview/');
+        document.getElementById('pdfPreviewFrame').src = previewUrl;
+        downloadModal.hide();
+        pdfPreviewModal.show();
+    }
+}
 
 function getWeekNumber(date) {
     const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -307,10 +333,8 @@ function generateReport() {
         generateModal.hide();
         
         if (result.success) {
+            currentPdfUrl = result.download_url;
             document.getElementById('downloadLink').href = result.download_url;
-            // 设置预览链接
-            const previewUrl = result.download_url.replace('/download/', '/preview/');
-            document.getElementById('previewLink').href = previewUrl;
             downloadModal.show();
             showToast('PDF汇报生成成功！', 'success');
         } else {
